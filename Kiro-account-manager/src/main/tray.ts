@@ -12,13 +12,16 @@ const menuIcons: Map<string, NativeImage> = new Map()
 function getTrayIconDir(): string {
   // 开发环境和生产环境路径不同
   if (app.isPackaged) {
-    return join(process.resourcesPath, 'resources', '托盘图标')
+    // asarUnpack 会将 resources 解包到 app.asar.unpacked 目录
+    return join(process.resourcesPath, 'app.asar.unpacked', 'resources', '托盘图标')
   }
   return join(__dirname, '../../resources/托盘图标')
 }
 
 // 图标名称到文件名的映射
 const ICON_FILE_MAP: Record<string, string> = {
+  // 应用图标
+  'app': 'icon.png',
   // 状态图标
   'status-running': '运行状态.png',
   'status-stopped': '停止状态.png',
@@ -106,13 +109,22 @@ function getTrayIconPath(): string {
   // 根据平台选择合适的图标
   if (process.platform === 'win32') {
     // Windows 使用 ico 文件
-    return join(__dirname, '../../build/icon.ico')
+    if (app.isPackaged) {
+      return join(process.resourcesPath, 'app.asar.unpacked', 'resources', 'icon.ico')
+    }
+    return join(__dirname, '../../resources/icon.ico')
   } else if (process.platform === 'darwin') {
     // macOS 使用 Template 图标（自动适应深色/浅色模式）
-    return join(__dirname, '../../build/icon.png')
+    if (app.isPackaged) {
+      return join(process.resourcesPath, 'app.asar.unpacked', 'resources', 'icon.png')
+    }
+    return join(__dirname, '../../resources/icon.png')
   } else {
     // Linux 使用 png 文件
-    return join(__dirname, '../../build/icon.png')
+    if (app.isPackaged) {
+      return join(process.resourcesPath, 'app.asar.unpacked', 'resources', 'icon.png')
+    }
+    return join(__dirname, '../../resources/icon.png')
   }
 }
 
@@ -133,6 +145,7 @@ function buildTrayMenu(): Menu {
   // 应用标题
   menuTemplate.push({
     label: `Kiro 账号管理器 v${app.getVersion()}`,
+    icon: getMenuIcon('app'),
     enabled: false
   })
   menuTemplate.push({ type: 'separator' })
