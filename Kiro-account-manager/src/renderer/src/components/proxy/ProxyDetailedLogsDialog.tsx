@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { Button, Badge, Input } from '../ui'
-import { Trash2, RefreshCw, Download, Search, X, Copy, ChevronDown, ChevronUp, ArrowDownToLine, Pause } from 'lucide-react'
+import { Trash2, RefreshCw, Download, Search, X, Copy, ChevronDown, ChevronUp, ArrowDownToLine, Pause, ChevronLeft, ChevronRight } from 'lucide-react'
+import { useTranslation } from '../../hooks/useTranslation'
 
 interface LogEntry {
   timestamp: string
@@ -51,11 +52,11 @@ function CustomDropdown({ value, options, onChange, placeholder, className }: Cu
       <button
         type="button"
         onClick={() => setIsOpen(!isOpen)}
-        className="relative h-9 px-3 pr-8 rounded-lg border border-border bg-background/50 text-sm cursor-pointer hover:border-primary/50 focus:border-primary focus:outline-none transition-all flex items-center gap-2 min-w-[120px]"
+        className="relative h-8 px-2 pr-7 rounded-lg border border-border bg-background/50 text-xs cursor-pointer hover:border-primary/50 focus:border-primary focus:outline-none transition-all flex items-center gap-1.5"
       >
         {selectedOption?.icon}
         <span className="flex-1 text-left truncate">{selectedOption?.label || placeholder}</span>
-        <ChevronDown className={`w-4 h-4 absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+        <ChevronDown className={`w-3.5 h-3.5 absolute right-1.5 top-1/2 -translate-y-1/2 text-muted-foreground transition-transform ${isOpen ? 'rotate-180' : ''}`} />
       </button>
       
       {isOpen && (
@@ -68,7 +69,7 @@ function CustomDropdown({ value, options, onChange, placeholder, className }: Cu
                 onChange(option.value)
                 setIsOpen(false)
               }}
-              className={`w-full px-3 py-2 text-sm text-left flex items-center gap-2 hover:bg-accent transition-colors ${
+              className={`w-full px-2.5 py-1.5 text-xs text-left flex items-center gap-1.5 hover:bg-accent transition-colors ${
                 option.value === value ? 'bg-accent text-accent-foreground' : ''
               }`}
             >
@@ -88,6 +89,8 @@ function CustomDropdown({ value, options, onChange, placeholder, className }: Cu
 }
 
 export function ProxyDetailedLogsDialog({ open, onOpenChange }: ProxyDetailedLogsDialogProps) {
+  const { t } = useTranslation()
+  const isEn = t('common.unknown') === 'Unknown'
   const [logs, setLogs] = useState<LogEntry[]>([])
   const [loading, setLoading] = useState(false)
   const [searchText, setSearchText] = useState('')
@@ -95,6 +98,17 @@ export function ProxyDetailedLogsDialog({ open, onOpenChange }: ProxyDetailedLog
   const [categoryFilter, setCategoryFilter] = useState<string>('all')
   const [autoScroll, setAutoScroll] = useState(true)
   const [expandedLogs, setExpandedLogs] = useState<Set<number>>(new Set())
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize] = useState(() => {
+    const saved = localStorage.getItem('proxyLogs_pageSize')
+    return saved ? parseInt(saved) : 1000
+  })
+  const [timeRange, setTimeRange] = useState<string>(() => {
+    return localStorage.getItem('proxyLogs_timeRange') || 'all'
+  })
+  const [displayLimit, setDisplayLimit] = useState<string>(() => {
+    return localStorage.getItem('proxyLogs_displayLimit') || 'all'
+  })
   const scrollRef = useRef<HTMLDivElement>(null)
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null)
 
@@ -129,6 +143,19 @@ export function ProxyDetailedLogsDialog({ open, onOpenChange }: ProxyDetailedLog
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight
     }
   }, [logs, autoScroll])
+
+  // 持久化保存设置
+  useEffect(() => {
+    localStorage.setItem('proxyLogs_pageSize', pageSize.toString())
+  }, [pageSize])
+
+  useEffect(() => {
+    localStorage.setItem('proxyLogs_timeRange', timeRange)
+  }, [timeRange])
+
+  useEffect(() => {
+    localStorage.setItem('proxyLogs_displayLimit', displayLimit)
+  }, [displayLimit])
 
   const handleClearLogs = async () => {
     try {
@@ -173,20 +200,67 @@ export function ProxyDetailedLogsDialog({ open, onOpenChange }: ProxyDetailedLog
   // 获取所有类别
   const categories = Array.from(new Set(logs.map(log => log.category))).sort()
 
-  // 过滤日志
-  const filteredLogs = logs.filter(log => {
-    if (levelFilter !== 'all' && log.level !== levelFilter) return false
-    if (categoryFilter !== 'all' && log.category !== categoryFilter) return false
-    if (searchText) {
-      const search = searchText.toLowerCase()
-      return (
-        log.message.toLowerCase().includes(search) ||
-        log.category.toLowerCase().includes(search) ||
-        (log.data && JSON.stringify(log.data).toLowerCase().includes(search))
-      )
+  // 时间范围过滤
+  const getTimeRangeMs = (range: string): number => {
+    const hour = 60 * 60 * 1000
+    const day = 24 * hour
+    switch (range) {
+      case '1h': return hour
+      case '6h': return 6 * hour
+      case '12h': return 12 * hour
+      case '1d': return day
+      case '3d': return 3 * day
+      case '7d': return 7 * day
+      case '30d': return 30 * day
+      case '180d': return 180 * day
+      case '1y': return 365 * day
+      default: return 0
     }
-    return true
-  })
+  }
+
+  // 过滤日志
+  const filteredLogs = (() => {
+    const now = Date.now()
+    const rangeMs = getTimeRangeMs(timeRange)
+    
+    let result = logs.filter(log => {
+      // 时间范围过滤
+      if (rangeMs > 0) {
+        const logTime = new Date(log.timestamp).getTime()
+        if (now - logTime > rangeMs) return false
+      }
+      if (levelFilter !== 'all' && log.level !== levelFilter) return false
+      if (categoryFilter !== 'all' && log.category !== categoryFilter) return false
+      if (searchText) {
+        const search = searchText.toLowerCase()
+        return (
+          log.message.toLowerCase().includes(search) ||
+          log.category.toLowerCase().includes(search) ||
+          (log.data && JSON.stringify(log.data).toLowerCase().includes(search))
+        )
+      }
+      return true
+    })
+    
+    // 显示条数限制
+    if (displayLimit !== 'all') {
+      const limit = parseInt(displayLimit)
+      if (limit > 0) result = result.slice(-limit)
+    }
+    
+    return result
+  })()
+
+  // 分页逻辑
+  const totalPages = Math.ceil(filteredLogs.length / pageSize)
+  const startIndex = (currentPage - 1) * pageSize
+  const endIndex = Math.min(startIndex + pageSize, filteredLogs.length)
+  const paginatedLogs = filteredLogs.slice(startIndex, endIndex)
+
+  // 当过滤条件变化时重置到第一页
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [searchText, levelFilter, categoryFilter, timeRange, displayLimit])
 
   const getLevelColor = (level: string) => {
     switch (level) {
@@ -213,12 +287,14 @@ export function ProxyDetailedLogsDialog({ open, onOpenChange }: ProxyDetailedLog
       if (!timestamp) return '-'
       const date = new Date(timestamp)
       if (isNaN(date.getTime())) return timestamp || '-'
-      return date.toLocaleTimeString('zh-CN', { 
-        hour: '2-digit', 
-        minute: '2-digit', 
-        second: '2-digit',
-        hour12: false 
-      }) + '.' + date.getMilliseconds().toString().padStart(3, '0')
+      const year = date.getFullYear()
+      const month = (date.getMonth() + 1).toString().padStart(2, '0')
+      const day = date.getDate().toString().padStart(2, '0')
+      const hours = date.getHours().toString().padStart(2, '0')
+      const minutes = date.getMinutes().toString().padStart(2, '0')
+      const seconds = date.getSeconds().toString().padStart(2, '0')
+      const ms = date.getMilliseconds().toString().padStart(3, '0')
+      return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}.${ms}`
     } catch {
       return timestamp || '-'
     }
@@ -240,11 +316,43 @@ export function ProxyDetailedLogsDialog({ open, onOpenChange }: ProxyDetailedLog
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
               </svg>
             </div>
-            <h2 className="text-lg font-semibold">反代详细日志</h2>
+            <h2 className="text-lg font-semibold">{isEn ? 'Proxy Detailed Logs' : '反代详细日志'}</h2>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            <CustomDropdown
+              value={timeRange}
+              onChange={setTimeRange}
+              className="min-w-[70px]"
+              options={[
+                { value: 'all', label: isEn ? 'All Time' : '全部时间' },
+                { value: '1h', label: isEn ? '1 Hour' : '1小时' },
+                { value: '6h', label: isEn ? '6 Hours' : '6小时' },
+                { value: '12h', label: isEn ? '12 Hours' : '12小时' },
+                { value: '1d', label: isEn ? '1 Day' : '1天' },
+                { value: '3d', label: isEn ? '3 Days' : '3天' },
+                { value: '7d', label: isEn ? '7 Days' : '7天' },
+                { value: '30d', label: isEn ? '30 Days' : '30天' },
+                { value: '180d', label: isEn ? '180 Days' : '180天' },
+                { value: '1y', label: isEn ? '1 Year' : '1年' },
+              ]}
+            />
+            <CustomDropdown
+              value={displayLimit}
+              onChange={setDisplayLimit}
+              className="min-w-[70px]"
+              options={[
+                { value: 'all', label: isEn ? 'All' : '全部' },
+                { value: '5000', label: '5000' },
+                { value: '10000', label: isEn ? '10K' : '1万' },
+                { value: '50000', label: isEn ? '50K' : '5万' },
+                { value: '100000', label: isEn ? '100K' : '10万' },
+                { value: '200000', label: isEn ? '200K' : '20万' },
+                { value: '500000', label: isEn ? '500K' : '50万' },
+                { value: '1000000', label: isEn ? '1M' : '100万' },
+              ]}
+            />
             <Badge variant="secondary" className="font-mono">
-              {filteredLogs.length} / {logs.length} 条
+              {filteredLogs.length} / {logs.length} {isEn ? 'entries' : '条'}
             </Badge>
             <Button variant="ghost" size="icon" className="rounded-full hover:bg-destructive/10 hover:text-destructive" onClick={() => onOpenChange(false)}>
               <X className="w-4 h-4" />
@@ -253,15 +361,15 @@ export function ProxyDetailedLogsDialog({ open, onOpenChange }: ProxyDetailedLog
         </div>
 
         {/* 工具栏 */}
-        <div className="flex-shrink-0 flex items-center gap-3 px-5 py-3 border-b border-border bg-muted/20 flex-wrap">
+        <div className="flex-shrink-0 flex items-center gap-2 px-4 py-2.5 border-b border-border bg-muted/20">
           {/* 搜索 */}
-          <div className="relative flex-1 min-w-[200px]">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+          <div className="relative flex-1 min-w-[100px]">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
             <Input
-              placeholder="搜索日志内容..."
+              placeholder={isEn ? 'Search logs...' : '搜索日志内容...'}
               value={searchText}
               onChange={(e) => setSearchText(e.target.value)}
-              className="pl-9 pr-9 h-9 bg-background/50 border-border focus:border-primary"
+              className="pl-8 pr-8 h-8 text-xs bg-background/50 border-border focus:border-primary"
             />
             {searchText && (
               <Button
@@ -280,11 +388,11 @@ export function ProxyDetailedLogsDialog({ open, onOpenChange }: ProxyDetailedLog
             value={levelFilter}
             onChange={setLevelFilter}
             options={[
-              { value: 'all', label: '全部级别', icon: <span className="w-3 h-3 rounded-full bg-gradient-to-r from-red-500 via-yellow-500 to-blue-500" /> },
-              { value: 'ERROR', label: 'ERROR', icon: <span className="w-3 h-3 rounded-full bg-red-500" /> },
-              { value: 'WARN', label: 'WARN', icon: <span className="w-3 h-3 rounded-full bg-yellow-500" /> },
-              { value: 'INFO', label: 'INFO', icon: <span className="w-3 h-3 rounded-full bg-blue-500" /> },
-              { value: 'DEBUG', label: 'DEBUG', icon: <span className="w-3 h-3 rounded-full bg-gray-400" /> },
+              { value: 'all', label: isEn ? 'All' : '全部', icon: <span className="w-2.5 h-2.5 rounded-full bg-gradient-to-r from-red-500 via-yellow-500 to-blue-500" /> },
+              { value: 'ERROR', label: 'ERR', icon: <span className="w-2.5 h-2.5 rounded-full bg-red-500" /> },
+              { value: 'WARN', label: 'WARN', icon: <span className="w-2.5 h-2.5 rounded-full bg-yellow-500" /> },
+              { value: 'INFO', label: 'INFO', icon: <span className="w-2.5 h-2.5 rounded-full bg-blue-500" /> },
+              { value: 'DEBUG', label: 'DBG', icon: <span className="w-2.5 h-2.5 rounded-full bg-gray-400" /> },
             ]}
           />
 
@@ -292,74 +400,140 @@ export function ProxyDetailedLogsDialog({ open, onOpenChange }: ProxyDetailedLog
           <CustomDropdown
             value={categoryFilter}
             onChange={setCategoryFilter}
-            className="min-w-[140px]"
+            className="min-w-[100px]"
             options={[
-              { value: 'all', label: '全部类别', icon: <svg className="w-3.5 h-3.5 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" /></svg> },
+              { value: 'all', label: isEn ? 'All' : '全部', icon: <svg className="w-3 h-3 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" /></svg> },
               ...categories.map(cat => ({ 
                 value: cat, 
                 label: cat,
-                icon: <svg className="w-3.5 h-3.5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A2 2 0 013 12V7a4 4 0 014-4z" /></svg>
+                icon: <svg className="w-3 h-3 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A2 2 0 013 12V7a4 4 0 014-4z" /></svg>
               }))
             ]}
           />
 
-          <div className="h-6 w-px bg-border" />
+          <div className="h-5 w-px bg-border flex-shrink-0" />
 
           {/* 操作按钮 */}
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1 flex-shrink-0">
             <Button
               variant="outline"
               size="sm"
               onClick={loadLogs}
               disabled={loading}
-              className="h-9 px-3 hover:border-primary/50"
+              className="h-7 px-2 text-xs hover:border-primary/50"
             >
-              <RefreshCw className={`w-4 h-4 mr-1.5 ${loading ? 'animate-spin' : ''}`} />
-              刷新
+              <RefreshCw className={`w-3.5 h-3.5 mr-1 ${loading ? 'animate-spin' : ''}`} />
+              {isEn ? 'Refresh' : '刷新'}
             </Button>
             <Button
               variant="outline"
               size="sm"
               onClick={handleExportLogs}
               disabled={logs.length === 0}
-              className="h-9 px-3 hover:border-primary/50"
+              className="h-7 px-2 text-xs hover:border-primary/50"
             >
-              <Download className="w-4 h-4 mr-1.5" />
-              导出
+              <Download className="w-3.5 h-3.5 mr-1" />
+              {isEn ? 'Export' : '导出'}
             </Button>
             <Button
               variant="outline"
               size="sm"
               onClick={handleClearLogs}
               disabled={logs.length === 0}
-              className="h-9 px-3 text-destructive hover:bg-destructive/10 hover:border-destructive/50"
+              className="h-7 px-2 text-xs text-destructive hover:bg-destructive/10 hover:border-destructive/50"
             >
-              <Trash2 className="w-4 h-4 mr-1.5" />
-              清空
+              <Trash2 className="w-3.5 h-3.5 mr-1" />
+              {isEn ? 'Clear' : '清空'}
             </Button>
           </div>
 
-          <div className="h-6 w-px bg-border" />
+          <div className="h-5 w-px bg-border flex-shrink-0" />
 
           {/* 自动滚动 */}
           <Button
             variant={autoScroll ? 'default' : 'outline'}
             size="sm"
             onClick={() => setAutoScroll(!autoScroll)}
-            className="h-9 px-3"
+            className="h-7 px-2 text-xs flex-shrink-0"
           >
             {autoScroll ? (
               <>
-                <ArrowDownToLine className="w-4 h-4 mr-1.5" />
-                自动滚动
+                <ArrowDownToLine className="w-3.5 h-3.5 mr-1" />
+                {isEn ? 'Auto' : '自动'}
               </>
             ) : (
               <>
-                <Pause className="w-4 h-4 mr-1.5" />
-                暂停滚动
+                <Pause className="w-3.5 h-3.5 mr-1" />
+                {isEn ? 'Paused' : '暂停'}
               </>
             )}
           </Button>
+
+          <div className="h-5 w-px bg-border flex-shrink-0" />
+
+          {/* 分页控件 */}
+          <div className="flex items-center gap-1.5 flex-shrink-0">
+            <CustomDropdown
+              value={pageSize.toString()}
+              onChange={(v) => { setPageSize(Number(v)); setCurrentPage(1) }}
+              className="min-w-[60px]"
+              options={[
+                { value: '100', label: '100' },
+                { value: '500', label: '500' },
+                { value: '1000', label: '1000' },
+                { value: '2000', label: '2000' },
+                { value: '5000', label: '5000' },
+              ]}
+            />
+            <div className="flex items-center gap-0.5">
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-7 w-7"
+                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                disabled={currentPage <= 1}
+              >
+                <ChevronLeft className="w-3.5 h-3.5" />
+              </Button>
+              <div className="flex items-center text-xs text-muted-foreground whitespace-nowrap tabular-nums">
+                <input
+                  type="text"
+                  className="w-8 h-6 text-center text-xs bg-background border rounded px-0.5 focus:outline-none focus:ring-1 focus:ring-ring"
+                  value={currentPage}
+                  onChange={(e) => {
+                    const val = e.target.value
+                    if (val === '' || /^\d+$/.test(val)) {
+                      const num = parseInt(val) || 1
+                      if (num >= 1 && num <= totalPages) {
+                        setCurrentPage(num)
+                      }
+                    }
+                  }}
+                  onBlur={(e) => {
+                    const num = parseInt(e.target.value) || 1
+                    setCurrentPage(Math.min(Math.max(1, num), totalPages || 1))
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      const num = parseInt((e.target as HTMLInputElement).value) || 1
+                      setCurrentPage(Math.min(Math.max(1, num), totalPages || 1))
+                    }
+                  }}
+                />
+                <span className="px-0.5">/</span>
+                <span>{totalPages || 1}</span>
+              </div>
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-7 w-7"
+                onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                disabled={currentPage >= totalPages}
+              >
+                <ChevronRight className="w-3.5 h-3.5" />
+              </Button>
+            </div>
+          </div>
         </div>
 
         {/* 日志列表 */}
@@ -370,14 +544,15 @@ export function ProxyDetailedLogsDialog({ open, onOpenChange }: ProxyDetailedLog
                 <svg className="w-12 h-12 mb-3 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                 </svg>
-                <span className="text-sm">{logs.length === 0 ? '暂无日志记录' : '没有匹配的日志'}</span>
+                <span className="text-sm">{logs.length === 0 ? (isEn ? 'No logs yet' : '暂无日志记录') : (isEn ? 'No matching logs' : '没有匹配的日志')}</span>
                 {logs.length === 0 && (
-                  <span className="text-xs mt-1 opacity-70">发起反代请求后日志将显示在这里</span>
+                  <span className="text-xs mt-1 opacity-70">{isEn ? 'Logs will appear here after proxy requests' : '发起反代请求后日志将显示在这里'}</span>
                 )}
               </div>
             ) : (
-              filteredLogs.map((log, index) => {
-                const isExpanded = expandedLogs.has(index)
+              paginatedLogs.map((log, index) => {
+                const globalIndex = startIndex + index
+                const isExpanded = expandedLogs.has(globalIndex)
                 const hasData = log.data !== undefined && log.data !== null
 
                 return (
@@ -412,7 +587,7 @@ export function ProxyDetailedLogsDialog({ open, onOpenChange }: ProxyDetailedLog
                             variant="ghost"
                             size="icon"
                             className="w-6 h-6 rounded-full hover:bg-primary/10"
-                            onClick={() => toggleExpand(index)}
+                            onClick={() => toggleExpand(globalIndex)}
                           >
                             {isExpanded ? (
                               <ChevronUp className="w-3.5 h-3.5" />

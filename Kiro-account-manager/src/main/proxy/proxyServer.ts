@@ -32,6 +32,7 @@ export interface ProxyServerEvents {
   onAccountUpdate?: (account: ProxyAccount) => void
   onCreditsUpdate?: (totalCredits: number) => void
   onTokensUpdate?: (inputTokens: number, outputTokens: number) => void
+  onRequestStatsUpdate?: (totalRequests: number, successRequests: number, failedRequests: number) => void
 }
 
 export class ProxyServer {
@@ -39,6 +40,7 @@ export class ProxyServer {
   private accountPool: AccountPool
   private config: ProxyConfig
   private stats: ProxyStats
+  private sessionStats: { totalRequests: number; successRequests: number; failedRequests: number; startTime: number }
   private events: ProxyServerEvents
   private refreshingTokens: Set<string> = new Set() // 防止并发刷新
   private isHttps: boolean = false
@@ -72,6 +74,12 @@ export class ProxyServer {
       endpointStats: new Map(),
       modelStats: new Map(),
       recentRequests: []
+    }
+    this.sessionStats = {
+      totalRequests: 0,
+      successRequests: 0,
+      failedRequests: 0,
+      startTime: 0
     }
     this.events = events
   }
@@ -132,6 +140,13 @@ export class ProxyServer {
       this.server.listen(this.config.port, this.config.host, () => {
         proxyLogger.info('ProxyServer', `Started on ${protocol}://${this.config.host}:${this.config.port}`)
         this.stats.startTime = Date.now()
+        // 重置会话统计
+        this.sessionStats = {
+          totalRequests: 0,
+          successRequests: 0,
+          failedRequests: 0,
+          startTime: Date.now()
+        }
         this.events.onStatusChange?.(true, this.config.port)
         resolve()
       })
@@ -233,6 +248,56 @@ export class ProxyServer {
     this.stats.inputTokens = 0
     this.stats.outputTokens = 0
     this.stats.totalTokens = 0
+  }
+
+  // 设置请求统计（用于从持久化存储恢复）
+  setRequestStats(totalRequests: number, successRequests: number, failedRequests: number): void {
+    this.stats.totalRequests = totalRequests
+    this.stats.successRequests = successRequests
+    this.stats.failedRequests = failedRequests
+  }
+
+  // 重置请求统计
+  resetRequestStats(): void {
+    this.stats.totalRequests = 0
+    this.stats.successRequests = 0
+    this.stats.failedRequests = 0
+    this.notifyRequestStatsUpdate()
+  }
+
+  // 通知请求统计更新
+  private notifyRequestStatsUpdate(): void {
+    this.events.onRequestStatsUpdate?.(
+      this.stats.totalRequests,
+      this.stats.successRequests,
+      this.stats.failedRequests
+    )
+  }
+
+  // 记录请求成功
+  private recordRequestSuccess(): void {
+    this.stats.successRequests++
+    this.sessionStats.successRequests++
+    this.notifyRequestStatsUpdate()
+  }
+
+  // 记录请求失败
+  private recordRequestFailed(): void {
+    this.stats.failedRequests++
+    this.sessionStats.failedRequests++
+    this.notifyRequestStatsUpdate()
+  }
+
+  // 记录新请求
+  private recordNewRequest(): void {
+    this.stats.totalRequests++
+    this.sessionStats.totalRequests++
+    this.notifyRequestStatsUpdate()
+  }
+
+  // 获取会话统计（当前服务运行期间的统计）
+  getSessionStats(): { totalRequests: number; successRequests: number; failedRequests: number; startTime: number } {
+    return { ...this.sessionStats }
   }
 
   // 是否运行中
@@ -437,16 +502,29 @@ export class ProxyServer {
           }
         }
 
-        // 429: 切换端点或账号
-        if (errMsg.includes('429') || errMsg.includes('quota') || errMsg.includes('ThrottlingException')) {
+        // 402/429: 额度耗尽，切换端点或账号
+        if (errMsg.includes('402') || errMsg.includes('429') || errMsg.includes('quota') || errMsg.includes('ThrottlingException') || errMsg.includes('reached the limit')) {
           console.log('[ProxyServer] Quota/throttle error, switching endpoint or account')
           this.accountPool.recordError(currentAccount.id, true)
           endpointIndex = (endpointIndex + 1) % 2 // 切换端点
-          if (endpointIndex === 0 && this.config.enableMultiAccount) {
-            // 已尝试所有端点，只在启用多账号时切换账号
-            const nextAccount = this.accountPool.getNextAccount()
-            if (nextAccount && nextAccount.id !== currentAccount.id) {
-              currentAccount = nextAccount
+          if (endpointIndex === 0) {
+            // 已尝试所有端点，检查是否需要切换账号
+            if (this.config.enableMultiAccount) {
+              // 多账号模式：切换到下一个账号
+              const nextAccount = this.accountPool.getNextAccount()
+              if (nextAccount && nextAccount.id !== currentAccount.id) {
+                currentAccount = nextAccount
+              }
+            } else if (this.config.autoSwitchOnQuotaExhausted) {
+              // 单账号模式 + 启用自动切换：切换到下一个可用账号
+              const nextAccount = this.accountPool.getNextAvailableAccount(currentAccount.id)
+              if (nextAccount && nextAccount.id !== currentAccount.id) {
+                console.log(`[ProxyServer] Auto-switching from ${currentAccount.id} to ${nextAccount.id} due to quota exhausted`)
+                currentAccount = nextAccount
+                // 更新配置中的选定账号
+                this.config.selectedAccountIds = [nextAccount.id]
+                this.events.onAccountUpdate?.(nextAccount)
+              }
             }
           }
           continue
@@ -799,13 +877,13 @@ export class ProxyServer {
     const body = await this.readBody(req)
     const request: OpenAIChatRequest = JSON.parse(body)
 
-    this.stats.totalRequests++
+    this.recordNewRequest()
     this.events.onRequest?.({ path: '/v1/chat/completions', method: 'POST' })
 
     // 获取账号（包含 Token 刷新检查）
     const account = await this.getAvailableAccount()
     if (!account) {
-      this.stats.failedRequests++
+      this.recordRequestFailed()
       this.sendError(res, 503, 'No available accounts')
       this.events.onResponse?.({ path: '/v1/chat/completions', status: 503, error: 'No available accounts' })
       this.recordRequest({ path: '/v1/chat/completions', model: request.model, success: false, error: 'No available accounts' })
@@ -824,6 +902,25 @@ export class ProxyServer {
       // 转换为 Kiro 格式
       const kiroPayload = openaiToKiro(processedRequest, account.profileArn)
 
+      // 记录请求详情到日志
+      if (this.config.logRequests) {
+        const userInput = kiroPayload.conversationState.currentMessage?.userInputMessage
+        const contentLength = typeof userInput?.content === 'string' ? userInput.content.length : 0
+        const toolsCount = userInput?.userInputMessageContext?.tools?.length || 0
+        const historyLength = kiroPayload.conversationState.history?.length || 0
+        const hasImages = (userInput?.images?.length || 0) > 0
+        
+        proxyLogger.info('ProxyServer', `OpenAI API: ${request.model}`, {
+          model: request.model,
+          stream: request.stream,
+          contentLength,
+          toolsCount,
+          historyLength,
+          hasImages,
+          accountId: account.id
+        })
+      }
+
       if (request.stream) {
         // 流式响应（流式不使用重试机制，错误由流处理）
         await this.handleOpenAIStream(res, account, kiroPayload, request.model, startTime)
@@ -836,7 +933,7 @@ export class ProxyServer {
         )
         const response = kiroToOpenaiResponse(result.content, result.toolUses, result.usage, request.model)
 
-        this.stats.successRequests++
+        this.recordRequestSuccess()
         this.stats.totalTokens += result.usage.inputTokens + result.usage.outputTokens
         this.stats.inputTokens += result.usage.inputTokens
         this.stats.outputTokens += result.usage.outputTokens
@@ -915,7 +1012,7 @@ export class ProxyServer {
           }
         },
         async (usage) => {
-          this.stats.successRequests++
+          this.recordRequestSuccess()
           this.stats.totalTokens += usage.inputTokens + usage.outputTokens
           this.stats.inputTokens += usage.inputTokens
           this.stats.outputTokens += usage.outputTokens
@@ -1029,7 +1126,7 @@ export class ProxyServer {
           res.write(`data: ${JSON.stringify({ error: { message: error.message } })}\n\n`)
           res.end()
 
-          this.stats.failedRequests++
+          this.recordRequestFailed()
           const isQuotaError = error.message.includes('429') || error.message.includes('quota')
           this.accountPool.recordError(account.id, isQuotaError)
           this.events.onResponse?.({ path: '/v1/chat/completions', status: 500, error: error.message })
@@ -1045,13 +1142,13 @@ export class ProxyServer {
     const body = await this.readBody(req)
     const request: ClaudeRequest = JSON.parse(body)
 
-    this.stats.totalRequests++
+    this.recordNewRequest()
     this.events.onRequest?.({ path: '/v1/messages', method: 'POST' })
 
     // 获取账号（包含 Token 刷新检查）
     const account = await this.getAvailableAccount()
     if (!account) {
-      this.stats.failedRequests++
+      this.recordRequestFailed()
       this.sendError(res, 503, 'No available accounts')
       this.events.onResponse?.({ path: '/v1/messages', status: 503, error: 'No available accounts' })
       this.recordRequest({ path: '/v1/messages', model: request.model, success: false, error: 'No available accounts' })
@@ -1065,6 +1162,25 @@ export class ProxyServer {
       // 转换为 Kiro 格式
       const kiroPayload = claudeToKiro(request, account.profileArn)
 
+      // 记录请求详情到日志
+      if (this.config.logRequests) {
+        const userInput = kiroPayload.conversationState.currentMessage?.userInputMessage
+        const contentLength = typeof userInput?.content === 'string' ? userInput.content.length : 0
+        const toolsCount = userInput?.userInputMessageContext?.tools?.length || 0
+        const historyLength = kiroPayload.conversationState.history?.length || 0
+        const hasImages = (userInput?.images?.length || 0) > 0
+        
+        proxyLogger.info('ProxyServer', `Claude API: ${request.model}`, {
+          model: request.model,
+          stream: request.stream,
+          contentLength,
+          toolsCount,
+          historyLength,
+          hasImages,
+          accountId: account.id.substring(0, 8) + '...'
+        })
+      }
+
       if (request.stream) {
         // 流式响应（流式不使用重试机制，错误由流处理）
         await this.handleClaudeStream(res, account, kiroPayload, request.model, startTime)
@@ -1077,7 +1193,7 @@ export class ProxyServer {
         )
         const response = kiroToClaudeResponse(result.content, result.toolUses, result.usage, request.model)
 
-        this.stats.successRequests++
+        this.recordRequestSuccess()
         this.stats.totalTokens += result.usage.inputTokens + result.usage.outputTokens
         this.stats.inputTokens += result.usage.inputTokens
         this.stats.outputTokens += result.usage.outputTokens
@@ -1198,7 +1314,7 @@ export class ProxyServer {
             contentBlockIndex++
           }
 
-          this.stats.successRequests++
+          this.recordRequestSuccess()
           this.stats.totalTokens += usage.inputTokens + usage.outputTokens
           this.stats.inputTokens += usage.inputTokens
           this.stats.outputTokens += usage.outputTokens
@@ -1289,7 +1405,7 @@ export class ProxyServer {
           res.write(`event: error\ndata: ${JSON.stringify(errorEvent)}\n\n`)
           res.end()
 
-          this.stats.failedRequests++
+          this.recordRequestFailed()
           const isQuotaError = error.message.includes('429') || error.message.includes('quota')
           this.accountPool.recordError(account.id, isQuotaError)
           this.events.onResponse?.({ path: '/v1/messages', status: 500, error: error.message })
@@ -1302,7 +1418,7 @@ export class ProxyServer {
 
   // 处理 API 错误
   private handleApiError(res: http.ServerResponse, account: { id: string }, error: Error, path: string, model?: string, startTime?: number): void {
-    this.stats.failedRequests++
+    this.recordRequestFailed()
     const isQuotaError = error.message.includes('429') || error.message.includes('quota')
     const isAuthError = error.message.includes('401') || error.message.includes('403') || error.message.includes('Auth')
 

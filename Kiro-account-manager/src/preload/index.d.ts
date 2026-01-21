@@ -523,13 +523,16 @@ interface KiroApi {
   proxyStop: () => Promise<{ success: boolean; error?: string }>
 
   // 获取反代服务器状态
-  proxyGetStatus: () => Promise<{ running: boolean; config: unknown; stats: unknown }>
+  proxyGetStatus: () => Promise<{ running: boolean; config: unknown; stats: unknown; sessionStats?: { totalRequests: number; successRequests: number; failedRequests: number; startTime: number } }>
 
   // 重置累计 credits
   proxyResetCredits: () => Promise<{ success: boolean }>
 
   // 重置累计 tokens
   proxyResetTokens: () => Promise<{ success: boolean }>
+
+  // 重置请求统计
+  proxyResetRequestStats: () => Promise<{ success: boolean }>
 
   // 获取反代详细日志
   proxyGetLogs: (count?: number) => Promise<Array<{ timestamp: string; level: string; category: string; message: string; data?: unknown }>>
@@ -541,7 +544,7 @@ interface KiroApi {
   proxyGetLogsCount: () => Promise<number>
 
   // 更新反代服务器配置
-  proxyUpdateConfig: (config: { port?: number; host?: string; apiKey?: string; enableMultiAccount?: boolean; selectedAccountIds?: string[]; logRequests?: boolean; autoStart?: boolean; maxRetries?: number; preferredEndpoint?: 'codewhisperer' | 'amazonq'; autoContinueRounds?: number; disableTools?: boolean }) => Promise<{ success: boolean; config?: unknown; error?: string }>
+  proxyUpdateConfig: (config: { port?: number; host?: string; apiKey?: string; enableMultiAccount?: boolean; selectedAccountIds?: string[]; logRequests?: boolean; autoStart?: boolean; maxRetries?: number; preferredEndpoint?: 'codewhisperer' | 'amazonq'; autoContinueRounds?: number; disableTools?: boolean; autoSwitchOnQuotaExhausted?: boolean }) => Promise<{ success: boolean; config?: unknown; error?: string }>
 
   // 添加账号到反代池
   proxyAddAccount: (account: { id: string; email?: string; accessToken: string; refreshToken?: string; profileArn?: string; expiresAt?: number }) => Promise<{ success: boolean; accountCount?: number; error?: string }>
@@ -618,10 +621,13 @@ interface KiroApi {
     email: string
     idp: string
     status: string
+    subscription?: string
     usage?: {
-      inputTokens: number
-      outputTokens: number
+      usedCredits: number
+      totalCredits: number
       totalRequests: number
+      successRequests: number
+      failedRequests: number
     }
   } | null) => void
 
@@ -635,6 +641,9 @@ interface KiroApi {
 
   // 刷新托盘菜单
   refreshTrayMenu: () => void
+
+  // 更新托盘语言
+  updateTrayLanguage: (language: 'en' | 'zh') => void
 
   // 监听托盘刷新账户事件
   onTrayRefreshAccount: (callback: () => void) => () => void

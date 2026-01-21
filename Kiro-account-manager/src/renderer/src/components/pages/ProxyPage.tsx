@@ -7,7 +7,7 @@ export function ProxyPage() {
   const isEn = t('common.unknown') === 'Unknown'
 
   return (
-    <div className="p-6 max-w-4xl mx-auto space-y-6">
+    <div className="flex-1 p-6 space-y-6 overflow-auto">
       {/* 页面标题 - 与设置页面样式一致 */}
       <div className="relative overflow-hidden rounded-xl bg-gradient-to-r from-primary/10 via-primary/5 to-primary/10 p-6 border border-primary/20">
         <div className="absolute top-0 right-0 w-32 h-32 bg-gradient-to-br from-primary/20 to-transparent rounded-full blur-2xl" />

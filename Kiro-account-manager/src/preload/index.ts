@@ -588,6 +588,11 @@ const api = {
     return ipcRenderer.invoke('proxy-reset-tokens')
   },
 
+  // 重置请求统计
+  proxyResetRequestStats: (): Promise<{ success: boolean }> => {
+    return ipcRenderer.invoke('proxy-reset-request-stats')
+  },
+
   // 获取反代详细日志
   proxyGetLogs: (count?: number): Promise<Array<{ timestamp: string; level: string; category: string; message: string; data?: unknown }>> => {
     return ipcRenderer.invoke('proxy-get-logs', count)
@@ -745,10 +750,13 @@ const api = {
     email: string
     idp: string
     status: string
+    subscription?: string
     usage?: {
-      inputTokens: number
-      outputTokens: number
+      usedCredits: number
+      totalCredits: number
       totalRequests: number
+      successRequests: number
+      failedRequests: number
     }
   } | null): void => {
     ipcRenderer.send('update-tray-account', account)
@@ -767,6 +775,11 @@ const api = {
   // 刷新托盘菜单
   refreshTrayMenu: (): void => {
     ipcRenderer.send('refresh-tray-menu')
+  },
+
+  // 更新托盘语言
+  updateTrayLanguage: (language: 'en' | 'zh'): void => {
+    ipcRenderer.send('update-tray-language', language)
   },
 
   // 监听托盘刷新账户事件

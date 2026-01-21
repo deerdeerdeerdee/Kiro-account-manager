@@ -271,6 +271,22 @@ The project is configured with GitHub Actions workflow for auto building all pla
 
 ## 📋 Changelog
 
+### v1.4.4 (2025-01-21)
+- 📊 **Session Statistics**: Added request statistics for current service session, resets on service restart
+- 🎯 **Tray Menu Enhanced**: Tray menu shows total/session stats, subscription type, used/total credits, and supports language switching
+- 🔄 **Auto-Switch on Quota Exhausted**: In single-account mode, auto-switch to next available account when 402 quota error detected
+- 📐 **Proxy Panel Layout**: Stats cards changed to compact 6-column single-row layout
+- 🔄 **Status Indicator**: Running status badge now has animated ping effect
+- 🎨 **Page Width Unified**: API proxy page width now matches other pages
+- 🌐 **UI Translation**: Added English translation for close confirm dialog and detailed logs interface
+- 📄 **Log Pagination**: Detailed logs support pagination with page jump feature to prevent lag
+- 🔍 **Request Details**: Log entries can be expanded to view request details (model, content length, tools count, history length, etc.)
+- ⏰ **Full Timestamp Format**: Log timestamps now show full format YYYY-MM-DD HH:mm:ss.ms
+- 📋 **Log Filtering**: Added time range filter (1h/6h/12h/1d/3d/7d/30d/180d/1y) and display limit (5000-1M entries)
+- 💾 **Settings Persistence**: Time range, display limit, and page size settings auto-saved
+- 📦 **Log Storage Expansion**: Backend log storage limit increased from 10K to 1M entries
+- 🐛 **Progress Bar Fix**: Fixed account selection dialog progress bar not showing full when quota exhausted
+
 ### v1.4.3 (2025-01-20)
 - 📋 **Detailed Logs Viewer**: New detailed logs page for proxy server, similar to console output, supports real-time event viewing
 - 💾 **Log Persistence**: All proxy logs are persistently saved to `proxy-logs.json` until manually cleared

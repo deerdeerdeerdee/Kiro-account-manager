@@ -2,8 +2,11 @@ import { useState, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { X, Minimize2, LogOut, XCircle, Check } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { useTranslation } from '../hooks/useTranslation'
 
 export function CloseConfirmDialog() {
+  const { t } = useTranslation()
+  const isEn = t('common.unknown') === 'Unknown'
   const [open, setOpen] = useState(false)
   const [rememberChoice, setRememberChoice] = useState(false)
 
@@ -35,8 +38,8 @@ export function CloseConfirmDialog() {
                 <XCircle className="h-6 w-6 text-primary" />
               </div>
               <div>
-                <h2 className="text-lg font-bold">关闭窗口</h2>
-                <p className="text-sm text-muted-foreground">请选择关闭行为</p>
+                <h2 className="text-lg font-bold">{isEn ? 'Close Window' : '关闭窗口'}</h2>
+                <p className="text-sm text-muted-foreground">{isEn ? 'Choose an action' : '请选择关闭行为'}</p>
               </div>
             </div>
             <button
@@ -51,11 +54,11 @@ export function CloseConfirmDialog() {
         {/* 内容 */}
         <div className="p-6 space-y-4">
           <p className="text-sm text-muted-foreground">
-            您想要最小化到系统托盘还是退出程序？
+            {isEn ? 'Would you like to minimize to system tray or exit the application?' : '您想要最小化到系统托盘还是退出程序？'}
           </p>
           
           <p className="text-xs text-muted-foreground bg-muted/50 rounded-lg p-3">
-            最小化到托盘后，程序将在后台继续运行，代理服务保持可用。您可以通过点击托盘图标重新打开窗口。
+            {isEn ? 'When minimized to tray, the app will continue running in the background and the proxy service will remain available. You can reopen the window by clicking the tray icon.' : '最小化到托盘后，程序将在后台继续运行，代理服务保持可用。您可以通过点击托盘图标重新打开窗口。'}
           </p>
 
           {/* 操作按钮 */}
@@ -69,8 +72,8 @@ export function CloseConfirmDialog() {
                 <Minimize2 className="h-4 w-4 text-blue-500" />
               </div>
               <div className="text-left">
-                <div className="font-medium">最小化到托盘</div>
-                <div className="text-xs text-muted-foreground">在后台继续运行</div>
+                <div className="font-medium">{isEn ? 'Minimize to Tray' : '最小化到托盘'}</div>
+                <div className="text-xs text-muted-foreground">{isEn ? 'Continue running in background' : '在后台继续运行'}</div>
               </div>
             </Button>
             
@@ -83,8 +86,8 @@ export function CloseConfirmDialog() {
                 <LogOut className="h-4 w-4 text-red-500" />
               </div>
               <div className="text-left">
-                <div className="font-medium">退出程序</div>
-                <div className="text-xs text-muted-foreground">完全关闭应用</div>
+                <div className="font-medium">{isEn ? 'Exit Application' : '退出程序'}</div>
+                <div className="text-xs text-muted-foreground">{isEn ? 'Close the app completely' : '完全关闭应用'}</div>
               </div>
             </Button>
           </div>
@@ -107,7 +110,7 @@ export function CloseConfirmDialog() {
               onClick={() => setRememberChoice(!rememberChoice)}
               className="text-sm text-muted-foreground cursor-pointer select-none"
             >
-              记住我的选择
+              {isEn ? 'Remember my choice' : '记住我的选择'}
             </button>
           </div>
 
@@ -117,7 +120,7 @@ export function CloseConfirmDialog() {
             className="w-full"
             onClick={() => handleAction('cancel')}
           >
-            取消
+            {isEn ? 'Cancel' : '取消'}
           </Button>
         </div>
       </div>

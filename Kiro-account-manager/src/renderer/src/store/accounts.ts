@@ -1545,6 +1545,11 @@ export const useAccountsStore = create<AccountsStore>()((set, get) => ({
   setLanguage: (language) => {
     set({ language })
     get().saveToStorage()
+    // 更新托盘菜单语言
+    const actualLang = language === 'auto' 
+      ? (navigator.language.startsWith('zh') ? 'zh' : 'en')
+      : language
+    window.api.updateTrayLanguage(actualLang)
   },
 
   applyTheme: () => {

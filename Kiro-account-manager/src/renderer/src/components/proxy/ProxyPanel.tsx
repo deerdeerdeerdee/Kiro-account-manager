@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Play, Square, RefreshCw, Copy, Check, Server, Users, Activity, AlertCircle, Globe, Zap, Loader2, FileText, Eye, EyeOff, Dices, Cpu, UserCheck } from 'lucide-react'
+import { Play, Square, RefreshCw, Copy, Check, Server, Activity, AlertCircle, Globe, Zap, Loader2, FileText, Eye, EyeOff, Dices, Cpu, UserCheck, RotateCcw, Users, Clock } from 'lucide-react'
 import { Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Input, Label, Switch, Badge, Select } from '../ui'
 import { useAccountsStore } from '../../store/accounts'
 import { useTranslation } from '../../hooks/useTranslation'
@@ -19,6 +19,13 @@ interface ProxyStats {
   startTime: number
 }
 
+interface SessionStats {
+  totalRequests: number
+  successRequests: number
+  failedRequests: number
+  startTime: number
+}
+
 interface ProxyConfig {
   enabled: boolean
   port: number
@@ -32,6 +39,7 @@ interface ProxyConfig {
   autoStart?: boolean
   autoContinueRounds?: number
   disableTools?: boolean
+  autoSwitchOnQuotaExhausted?: boolean
 }
 
 export function ProxyPanel() {
@@ -46,6 +54,7 @@ export function ProxyPanel() {
     logRequests: true
   })
   const [stats, setStats] = useState<ProxyStats | null>(null)
+  const [sessionStats, setSessionStats] = useState<SessionStats | null>(null)
   const [accountCount, setAccountCount] = useState(0)
   const [availableCount, setAvailableCount] = useState(0)
   const [copied, setCopied] = useState(false)
@@ -119,6 +128,9 @@ export function ProxyPanel() {
       }
       if (result.stats) {
         setStats(result.stats as ProxyStats)
+      }
+      if (result.sessionStats) {
+        setSessionStats(result.sessionStats as SessionStats)
       }
 
       const accountsResult = await window.api.proxyGetAccounts()
@@ -261,8 +273,17 @@ export function ProxyPanel() {
     })
 
     const unsubResponse = window.api.onProxyResponse((info) => {
+      const now = new Date()
+      const year = now.getFullYear()
+      const month = (now.getMonth() + 1).toString().padStart(2, '0')
+      const day = now.getDate().toString().padStart(2, '0')
+      const hours = now.getHours().toString().padStart(2, '0')
+      const minutes = now.getMinutes().toString().padStart(2, '0')
+      const seconds = now.getSeconds().toString().padStart(2, '0')
+      const ms = now.getMilliseconds().toString().padStart(3, '0')
+      const fullTime = `${year}-${month}-${day} ${hours}:${minutes}:${seconds}.${ms}`
       setRecentLogs(prev => [{
-        time: new Date().toLocaleTimeString(),
+        time: fullTime,
         path: info.path,
         status: info.status,
         tokens: info.tokens,
@@ -345,8 +366,20 @@ export function ProxyPanel() {
             </div>
             <Badge 
               variant={isRunning ? 'default' : 'secondary'} 
-              className={isRunning ? 'bg-green-500 text-white' : 'bg-muted text-muted-foreground'}
+              className={isRunning 
+                ? 'bg-green-500 text-white flex items-center gap-1.5 pr-2.5' 
+                : 'bg-muted text-muted-foreground flex items-center gap-1.5 pr-2.5'}
             >
+              <span className={isRunning 
+                ? 'relative flex h-2 w-2' 
+                : 'relative flex h-2 w-2'}>
+                {isRunning && (
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-75"></span>
+                )}
+                <span className={isRunning 
+                  ? 'relative inline-flex rounded-full h-2 w-2 bg-white' 
+                  : 'relative inline-flex rounded-full h-2 w-2 bg-muted-foreground'}></span>
+              </span>
               {isRunning ? (isEn ? 'Running' : '运行中') : (isEn ? 'Stopped' : '已停止')}
             </Badge>
           </div>
@@ -535,26 +568,42 @@ export function ProxyPanel() {
               />
               <Label htmlFor="multiAccount">{isEn ? 'Multi-Account' : '多账号轮询'}</Label>
             </div>
-            {/* 关闭多账号轮询时显示账号选择按钮 */}
+            {/* 关闭多账号轮询时显示账号选择按钮和自动切换开关 */}
             {!config.enableMultiAccount && (
-              <div className="col-span-2">
-                <Button
-                  variant="outline"
-                  className="w-full justify-start"
-                  onClick={() => setShowAccountSelectDialog(true)}
-                  disabled={isRunning}
-                >
-                  <UserCheck className="h-4 w-4 mr-2" />
-                  {config.selectedAccountId ? (
-                    (() => {
-                      const acc = accounts.get(config.selectedAccountId)
-                      return acc ? (acc.email || acc.id.substring(0, 12) + '...') : (isEn ? 'First Available' : '第一个可用账号')
-                    })()
-                  ) : (
-                    isEn ? 'First Available' : '第一个可用账号'
-                  )}
-                </Button>
-              </div>
+              <>
+                <div className="col-span-2">
+                  <Button
+                    variant="outline"
+                    className="w-full justify-start"
+                    onClick={() => setShowAccountSelectDialog(true)}
+                    disabled={isRunning}
+                  >
+                    <UserCheck className="h-4 w-4 mr-2" />
+                    {config.selectedAccountId ? (
+                      (() => {
+                        const acc = accounts.get(config.selectedAccountId)
+                        return acc ? (acc.email || acc.id.substring(0, 12) + '...') : (isEn ? 'First Available' : '第一个可用账号')
+                      })()
+                    ) : (
+                      isEn ? 'First Available' : '第一个可用账号'
+                    )}
+                  </Button>
+                </div>
+                <div className="col-span-2 flex items-center gap-2">
+                  <Switch
+                    id="autoSwitchOnQuotaExhausted"
+                    checked={config.autoSwitchOnQuotaExhausted || false}
+                    onCheckedChange={(checked) => {
+                      setConfig(prev => ({ ...prev, autoSwitchOnQuotaExhausted: checked }))
+                      window.api.proxyUpdateConfig({ autoSwitchOnQuotaExhausted: checked })
+                    }}
+                    disabled={isRunning}
+                  />
+                  <Label htmlFor="autoSwitchOnQuotaExhausted" className="text-sm">
+                    {isEn ? 'Auto-switch on quota exhausted' : '额度耗尽自动切换账号'}
+                  </Label>
+                </div>
+              </>
             )}
             <div className="flex items-center gap-2">
               <Switch
@@ -645,43 +694,87 @@ export function ProxyPanel() {
 
       {/* 统计卡片 */}
       {isRunning && (
-        <div className="grid grid-cols-4 gap-4">
+        <div className="grid grid-cols-6 gap-3">
           <Card className="border-0 shadow-sm hover:shadow-md transition-shadow duration-200 bg-gradient-to-br from-blue-500/5 to-transparent">
-            <CardContent className="pt-4">
-              <div className="flex items-center gap-2">
-                <div className="p-1.5 rounded-lg bg-blue-500/10">
-                  <Users className="h-4 w-4 text-blue-500" />
-                </div>
-                <span className="text-sm text-muted-foreground">{isEn ? 'Account Pool' : '账号池'}</span>
+            <CardContent className="pt-3 pb-3">
+              <div className="flex items-center gap-1 text-xs text-muted-foreground mb-1">
+                <Users className="h-3 w-3" />
+                <span>{isEn ? 'Pool' : '账号池'}</span>
               </div>
-              <div className="text-2xl font-bold text-foreground mt-1">{availableCount}/{accountCount}</div>
+              <div className="text-xl font-bold text-foreground">{availableCount}/{accountCount}</div>
             </CardContent>
           </Card>
           <Card className="border-0 shadow-sm hover:shadow-md transition-shadow duration-200 bg-gradient-to-br from-purple-500/5 to-transparent">
-            <CardContent className="pt-4">
-              <div className="flex items-center gap-2">
-                <div className="p-1.5 rounded-lg bg-purple-500/10">
-                  <Activity className="h-4 w-4 text-purple-500" />
+            <CardContent className="pt-3 pb-3">
+              <div className="flex items-center justify-between mb-1">
+                <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                  <Activity className="h-3 w-3" />
+                  <span>{isEn ? 'Total' : '总请求'}</span>
                 </div>
-                <span className="text-sm text-muted-foreground">{isEn ? 'Total Requests' : '总请求'}</span>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-4 w-4 text-muted-foreground hover:text-destructive"
+                  onClick={async () => {
+                    await window.api.proxyResetRequestStats()
+                    const result = await window.api.proxyGetStatus()
+                    if (result.stats) {
+                      setStats(result.stats as ProxyStats)
+                    }
+                    if (result.sessionStats) {
+                      setSessionStats(result.sessionStats as SessionStats)
+                    }
+                  }}
+                  title={isEn ? 'Reset Statistics' : '重置统计'}
+                >
+                  <RotateCcw className="h-3 w-3" />
+                </Button>
               </div>
-              <div className="text-2xl font-bold text-foreground mt-1">{stats?.totalRequests || 0}</div>
+              <div className="text-xl font-bold text-foreground">{stats?.totalRequests || 0}</div>
             </CardContent>
           </Card>
-          <Card className="border-0 shadow-sm hover:shadow-md transition-shadow duration-200">
-            <CardContent className="pt-4">
-              <div className="text-sm text-muted-foreground">{isEn ? 'Success/Failed' : '成功/失败'}</div>
-              <div className="text-2xl font-bold mt-1">
+          <Card className="border-0 shadow-sm hover:shadow-md transition-shadow duration-200 bg-gradient-to-br from-green-500/5 to-transparent">
+            <CardContent className="pt-3 pb-3">
+              <div className="flex items-center gap-1 text-xs text-muted-foreground mb-1">
+                <Check className="h-3 w-3" />
+                <span>{isEn ? 'Total S/F' : '总计成功/失败'}</span>
+              </div>
+              <div className="text-xl font-bold">
                 <span className="text-green-500">{stats?.successRequests || 0}</span>
                 <span className="text-muted-foreground mx-1">/</span>
                 <span className="text-red-500">{stats?.failedRequests || 0}</span>
               </div>
             </CardContent>
           </Card>
+          <Card className="border-0 shadow-sm hover:shadow-md transition-shadow duration-200 bg-gradient-to-br from-cyan-500/5 to-transparent">
+            <CardContent className="pt-3 pb-3">
+              <div className="flex items-center gap-1 text-xs text-muted-foreground mb-1">
+                <Zap className="h-3 w-3" />
+                <span>{isEn ? 'Session' : '本次请求'}</span>
+              </div>
+              <div className="text-xl font-bold text-foreground">{sessionStats?.totalRequests || 0}</div>
+            </CardContent>
+          </Card>
+          <Card className="border-0 shadow-sm hover:shadow-md transition-shadow duration-200 bg-gradient-to-br from-orange-500/5 to-transparent">
+            <CardContent className="pt-3 pb-3">
+              <div className="flex items-center gap-1 text-xs text-muted-foreground mb-1">
+                <Activity className="h-3 w-3" />
+                <span>{isEn ? 'Session S/F' : '本次成功/失败'}</span>
+              </div>
+              <div className="text-xl font-bold">
+                <span className="text-green-500">{sessionStats?.successRequests || 0}</span>
+                <span className="text-muted-foreground mx-1">/</span>
+                <span className="text-red-500">{sessionStats?.failedRequests || 0}</span>
+              </div>
+            </CardContent>
+          </Card>
           <Card className="border-0 shadow-sm hover:shadow-md transition-shadow duration-200 bg-gradient-to-br from-primary/5 to-transparent">
-            <CardContent className="pt-4">
-              <div className="text-sm text-muted-foreground">{isEn ? 'Uptime' : '运行时间'}</div>
-              <div className="text-2xl font-bold text-primary mt-1">{formatUptime(uptime)}</div>
+            <CardContent className="pt-3 pb-3">
+              <div className="flex items-center gap-1 text-xs text-muted-foreground mb-1">
+                <Clock className="h-3 w-3" />
+                <span>{isEn ? 'Uptime' : '运行时间'}</span>
+              </div>
+              <div className="text-xl font-bold text-primary whitespace-nowrap">{formatUptime(uptime)}</div>
             </CardContent>
           </Card>
         </div>

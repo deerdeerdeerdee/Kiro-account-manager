@@ -52,10 +52,13 @@ function App(): React.JSX.Element {
           email: activeAccount.email || 'Unknown',
           idp: activeAccount.idp || 'Unknown',
           status: activeAccount.status,
+          subscription: activeAccount.subscription?.title || undefined,
           usage: activeAccount.usage ? {
-            inputTokens: activeAccount.usage.current || 0,
-            outputTokens: activeAccount.usage.limit || 0,
-            totalRequests: Math.round(activeAccount.usage.percentUsed * 100)
+            usedCredits: activeAccount.usage.current || 0,
+            totalCredits: activeAccount.usage.limit || 0,
+            totalRequests: 0,
+            successRequests: 0,
+            failedRequests: 0
           } : undefined
         })
       } else {

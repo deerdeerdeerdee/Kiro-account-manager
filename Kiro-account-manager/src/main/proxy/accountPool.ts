@@ -92,6 +92,27 @@ export class AccountPool {
     return this.accounts.get(accountId) || null
   }
 
+  // 获取下一个可用账号（排除当前账号）
+  getNextAvailableAccount(excludeAccountId: string): ProxyAccount | null {
+    const accountList = Array.from(this.accounts.values())
+    if (accountList.length <= 1) {
+      return null
+    }
+
+    const now = Date.now()
+    
+    // 尝试找到一个可用的账号（排除当前账号）
+    for (const account of accountList) {
+      if (account.id !== excludeAccountId && this.isAccountAvailable(account, now)) {
+        return account
+      }
+    }
+
+    // 没有立即可用的账号，返回冷却时间最短的（排除当前账号）
+    const otherAccounts = accountList.filter(a => a.id !== excludeAccountId)
+    return this.getAccountWithShortestCooldown(otherAccounts, now)
+  }
+
   // 获取所有账号
   getAllAccounts(): ProxyAccount[] {
     return Array.from(this.accounts.values())

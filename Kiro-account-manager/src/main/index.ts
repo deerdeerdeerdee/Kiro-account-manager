@@ -16,6 +16,7 @@ import {
   updateCurrentAccount,
   updateAccountList,
   setTrayTooltip,
+  updateTrayLanguage,
   type TraySettings,
   defaultTraySettings
 } from './tray'
@@ -124,6 +125,10 @@ function initProxyServer(): ProxyServer {
   const savedTotalCredits = (store?.get('proxyTotalCredits') as number) || 0
   const savedInputTokens = (store?.get('proxyInputTokens') as number) || 0
   const savedOutputTokens = (store?.get('proxyOutputTokens') as number) || 0
+  // 从 store 加载保存的请求统计
+  const savedTotalRequests = (store?.get('proxyTotalRequests') as number) || 0
+  const savedSuccessRequests = (store?.get('proxySuccessRequests') as number) || 0
+  const savedFailedRequests = (store?.get('proxyFailedRequests') as number) || 0
   const defaultConfig: ProxyConfig = {
     enabled: false,
     port: 5580,
@@ -202,6 +207,16 @@ function initProxyServer(): ProxyServer {
           store.set('proxyInputTokens', inputTokens)
           store.set('proxyOutputTokens', outputTokens)
         }
+      },
+      // 请求统计更新回调 - 持久化请求统计
+      onRequestStatsUpdate: (totalRequests, successRequests, failedRequests) => {
+        if (store) {
+          store.set('proxyTotalRequests', totalRequests)
+          store.set('proxySuccessRequests', successRequests)
+          store.set('proxyFailedRequests', failedRequests)
+        }
+        // 更新托盘菜单
+        updateTrayMenu()
       }
     }
   )
@@ -214,6 +229,11 @@ function initProxyServer(): ProxyServer {
   // 恢复保存的累计 tokens
   if (savedInputTokens > 0 || savedOutputTokens > 0) {
     proxyServer.setTotalTokens(savedInputTokens, savedOutputTokens)
+  }
+
+  // 恢复保存的请求统计
+  if (savedTotalRequests > 0 || savedSuccessRequests > 0 || savedFailedRequests > 0) {
+    proxyServer.setRequestStats(savedTotalRequests, savedSuccessRequests, savedFailedRequests)
   }
 
   return proxyServer
@@ -768,7 +788,7 @@ let mainWindow: BrowserWindow | null = null
 // ============ 托盘相关变量 ============
 let traySettings: TraySettings = { ...defaultTraySettings }
 let isQuitting = false // 标记是否真正退出应用
-let currentProxyAccount: { id: string; email: string; idp: string; status: string; usage?: { inputTokens: number; outputTokens: number; totalRequests: number } } | null = null
+let currentProxyAccount: { id: string; email: string; idp: string; status: string; subscription?: string; usage?: { usedCredits: number; totalCredits: number; totalRequests: number; successRequests: number; failedRequests: number } } | null = null
 let allAccounts: { id: string; email: string; idp: string; status: string }[] = []
 
 // 加载托盘设置
@@ -835,7 +855,20 @@ function initTray(): void {
       }
     },
     getCurrentAccount: () => currentProxyAccount,
-    getAccountList: () => allAccounts
+    getAccountList: () => allAccounts,
+    getProxyStats: () => {
+      const server = initProxyServer()
+      const stats = server.getStats()
+      return {
+        totalRequests: stats.totalRequests,
+        successRequests: stats.successRequests,
+        failedRequests: stats.failedRequests
+      }
+    },
+    getSessionStats: () => {
+      const server = initProxyServer()
+      return server.getSessionStats()
+    }
   })
 
   // 设置初始提示
@@ -1111,6 +1144,11 @@ app.whenReady().then(async () => {
   // IPC: 刷新托盘菜单
   ipcMain.on('refresh-tray-menu', () => {
     updateTrayMenu()
+  })
+
+  // IPC: 更新托盘语言
+  ipcMain.on('update-tray-language', (_event, language: 'en' | 'zh') => {
+    updateTrayLanguage(language)
   })
 
   // IPC: 关闭确认对话框响应
@@ -3780,12 +3818,13 @@ app.whenReady().then(async () => {
     if (!proxyServer) {
       // 未初始化时从 store 读取保存的配置
       const savedConfig = store?.get('proxyConfig') as ProxyConfig | undefined
-      return { running: false, config: savedConfig || null, stats: null }
+      return { running: false, config: savedConfig || null, stats: null, sessionStats: null }
     }
     return {
       running: proxyServer.isRunning(),
       config: proxyServer.getConfig(),
-      stats: proxyServer.getStats()
+      stats: proxyServer.getStats(),
+      sessionStats: proxyServer.getSessionStats()
     }
   })
 
@@ -3808,6 +3847,19 @@ app.whenReady().then(async () => {
     if (store) {
       store.set('proxyInputTokens', 0)
       store.set('proxyOutputTokens', 0)
+    }
+    return { success: true }
+  })
+
+  // IPC: 重置请求统计
+  ipcMain.handle('proxy-reset-request-stats', () => {
+    if (proxyServer) {
+      proxyServer.resetRequestStats()
+    }
+    if (store) {
+      store.set('proxyTotalRequests', 0)
+      store.set('proxySuccessRequests', 0)
+      store.set('proxyFailedRequests', 0)
     }
     return { success: true }
   })

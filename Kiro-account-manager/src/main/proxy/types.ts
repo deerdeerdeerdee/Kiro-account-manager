@@ -265,6 +265,8 @@ export interface ProxyConfig {
   autoContinueRounds?: number
   // 禁用工具调用（移除 tools 参数）
   disableTools?: boolean
+  // 单账号模式下额度耗尽自动切换到下一个账号
+  autoSwitchOnQuotaExhausted?: boolean
 }
 
 export interface TlsConfig {

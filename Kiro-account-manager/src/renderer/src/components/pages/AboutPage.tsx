@@ -240,7 +240,7 @@ export function AboutPage() {
               <div className="bg-[#07C160]/5 rounded-xl p-3 border border-[#07C160]/20">
                 <img src={groupQR} alt="Group" className="w-48 h-48 object-contain" />
               </div>
-              <p className="text-sm text-muted-foreground">{isEn ? 'Scan with WeChat' : '微信扫码加入'}</p>
+              <p className="text-sm text-muted-foreground">{isEn ? 'Scan with WeChat' : 'QQ 扫码加入'}</p>
             </div>
           </div>
         </div>

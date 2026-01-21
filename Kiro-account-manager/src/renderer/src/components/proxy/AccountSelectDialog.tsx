@@ -44,6 +44,10 @@ export function AccountSelectDialog({
   const getUsagePercent = (acc: Account): number => {
     const usage = acc.usage
     if (!usage) return 0
+    // 直接通过 current/limit 计算百分比，确保准确性
+    if (usage.limit > 0) {
+      return Math.min(100, (usage.current / usage.limit) * 100)
+    }
     return usage.percentUsed || 0
   }
 

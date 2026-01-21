@@ -80,15 +80,19 @@ interface TrayAccountInfo {
   email: string
   idp: string
   status: string
+  subscription?: string
   usage?: {
-    inputTokens: number
-    outputTokens: number
+    usedCredits: number
+    totalCredits: number
     totalRequests: number
+    successRequests: number
+    failedRequests: number
   }
 }
 
 let currentAccount: TrayAccountInfo | null = null
 let accountList: TrayAccountInfo[] = []
+let currentLanguage: 'en' | 'zh' = 'zh'
 
 // 回调函数
 interface TrayCallbacks {
@@ -100,6 +104,8 @@ interface TrayCallbacks {
   getProxyStatus: () => { running: boolean; port: number }
   getCurrentAccount: () => TrayAccountInfo | null
   getAccountList: () => TrayAccountInfo[]
+  getProxyStats: () => { totalRequests: number; successRequests: number; failedRequests: number }
+  getSessionStats: () => { totalRequests: number; successRequests: number; failedRequests: number; startTime: number }
 }
 
 let callbacks: TrayCallbacks | null = null
@@ -128,23 +134,15 @@ function getTrayIconPath(): string {
   }
 }
 
-// 格式化 Token 用量
-function formatTokens(tokens: number): string {
-  if (tokens >= 1000000) {
-    return `${(tokens / 1000000).toFixed(2)}M`
-  } else if (tokens >= 1000) {
-    return `${(tokens / 1000).toFixed(1)}K`
-  }
-  return tokens.toString()
-}
-
 // 构建托盘菜单
 function buildTrayMenu(): Menu {
   const menuTemplate: MenuItemConstructorOptions[] = []
 
+  const isEn = currentLanguage === 'en'
+  
   // 应用标题
   menuTemplate.push({
-    label: `Kiro 账号管理器 v${app.getVersion()}`,
+    label: `Kiro ${isEn ? 'Account Manager' : '账号管理器'} v${app.getVersion()}`,
     icon: getMenuIcon('app'),
     enabled: false
   })
@@ -155,13 +153,13 @@ function buildTrayMenu(): Menu {
     const proxyStatus = callbacks.getProxyStatus()
     menuTemplate.push({
       label: proxyStatus.running 
-        ? `代理服务运行中 (端口 ${proxyStatus.port})` 
-        : '代理服务已停止',
+        ? (isEn ? `Proxy Running (Port ${proxyStatus.port})` : `代理服务运行中 (端口 ${proxyStatus.port})`) 
+        : (isEn ? 'Proxy Stopped' : '代理服务已停止'),
       icon: getStatusIcon(proxyStatus.running),
       enabled: false
     })
     menuTemplate.push({
-      label: proxyStatus.running ? '停止代理服务' : '启动代理服务',
+      label: proxyStatus.running ? (isEn ? 'Stop Proxy' : '停止代理服务') : (isEn ? 'Start Proxy' : '启动代理服务'),
       icon: getMenuIcon(proxyStatus.running ? 'stop' : 'play'),
       click: async () => {
         await callbacks?.onToggleProxy()
@@ -175,7 +173,7 @@ function buildTrayMenu(): Menu {
   const account = callbacks?.getCurrentAccount() || currentAccount
   if (account) {
     menuTemplate.push({
-      label: '当前账户',
+      label: isEn ? 'Current Account' : '当前账户',
       icon: getMenuIcon('mail'),
       enabled: false
     })
@@ -184,27 +182,43 @@ function buildTrayMenu(): Menu {
       enabled: false
     })
     menuTemplate.push({
-      label: `   身份: ${account.idp} | 状态: ${account.status === 'active' ? '活跃' : account.status}`,
+      label: isEn 
+        ? `   Identity: ${account.idp} | ${account.subscription || 'Unknown'} | ${account.status === 'active' ? 'Active' : account.status}`
+        : `   身份: ${account.idp} | ${account.subscription || '未知'} | ${account.status === 'active' ? '活跃' : account.status}`,
       icon: getMenuIcon(account.status === 'active' ? 'check' : 'warning'),
       enabled: false
     })
     
     if (account.usage) {
       menuTemplate.push({
-        label: `   用量: ${formatTokens(account.usage.inputTokens)} 输入 / ${formatTokens(account.usage.outputTokens)} 输出`,
+        label: isEn 
+          ? `   Usage: ${account.usage.usedCredits} / ${account.usage.totalCredits} Credits`
+          : `   用量: ${account.usage.usedCredits} / ${account.usage.totalCredits} Credits`,
         icon: getMenuIcon('usage'),
         enabled: false
       })
-      menuTemplate.push({
-        label: `   请求数: ${account.usage.totalRequests}`,
-        icon: getMenuIcon('requests'),
-        enabled: false
-      })
     }
+    // 从主进程获取实时统计数据（总计和会话）
+    const proxyStats = callbacks?.getProxyStats() || { totalRequests: 0, successRequests: 0, failedRequests: 0 }
+    const sessionStats = callbacks?.getSessionStats() || { totalRequests: 0, successRequests: 0, failedRequests: 0, startTime: 0 }
+    menuTemplate.push({
+      label: isEn 
+        ? `   Total: ${proxyStats.totalRequests} (✓${proxyStats.successRequests} ✗${proxyStats.failedRequests})`
+        : `   总计: ${proxyStats.totalRequests} (成功${proxyStats.successRequests} 失败${proxyStats.failedRequests})`,
+      icon: getMenuIcon('requests'),
+      enabled: false
+    })
+    menuTemplate.push({
+      label: isEn 
+        ? `   Session: ${sessionStats.totalRequests} (✓${sessionStats.successRequests} ✗${sessionStats.failedRequests})`
+        : `   本次: ${sessionStats.totalRequests} (成功${sessionStats.successRequests} 失败${sessionStats.failedRequests})`,
+      icon: getMenuIcon('requests'),
+      enabled: false
+    })
     menuTemplate.push({ type: 'separator' })
   } else {
     menuTemplate.push({
-      label: '暂无活跃账户',
+      label: isEn ? 'No Active Account' : '暂无活跃账户',
       icon: getMenuIcon('mail'),
       enabled: false
     })
@@ -213,7 +227,7 @@ function buildTrayMenu(): Menu {
 
   // 账户操作
   menuTemplate.push({
-    label: '刷新账户信息',
+    label: isEn ? 'Refresh Account Info' : '刷新账户信息',
     icon: getMenuIcon('refresh'),
     click: async () => {
       await callbacks?.onRefreshAccount()
@@ -224,7 +238,7 @@ function buildTrayMenu(): Menu {
   const accounts = callbacks?.getAccountList() || accountList
   const activeAccounts = accounts.filter(a => a.status === 'active')
   menuTemplate.push({
-    label: `切换到下一个账户 (${activeAccounts.length} 个可用)`,
+    label: isEn ? `Switch to Next Account (${activeAccounts.length} available)` : `切换到下一个账户 (${activeAccounts.length} 个可用)`,
     icon: getMenuIcon('switchAccount'),
     enabled: activeAccounts.length > 1,
     click: async () => {
@@ -237,7 +251,7 @@ function buildTrayMenu(): Menu {
 
   // 快捷操作
   menuTemplate.push({
-    label: '复制代理地址',
+    label: isEn ? 'Copy Proxy Address' : '复制代理地址',
     icon: getMenuIcon('copy'),
     click: () => {
       const { clipboard } = require('electron')
@@ -253,7 +267,7 @@ function buildTrayMenu(): Menu {
 
   // 显示主窗口
   menuTemplate.push({
-    label: '显示主窗口',
+    label: isEn ? 'Show Main Window' : '显示主窗口',
     icon: getMenuIcon('window'),
     click: () => {
       callbacks?.onShowWindow()
@@ -262,7 +276,7 @@ function buildTrayMenu(): Menu {
 
   // 退出应用
   menuTemplate.push({
-    label: '退出程序',
+    label: isEn ? 'Exit' : '退出程序',
     icon: getMenuIcon('logout'),
     click: () => {
       callbacks?.onQuit()
@@ -288,6 +302,12 @@ export function updateCurrentAccount(account: TrayAccountInfo | null): void {
 // 更新账户列表
 export function updateAccountList(accounts: TrayAccountInfo[]): void {
   accountList = accounts
+  updateTrayMenu()
+}
+
+// 更新语言设置
+export function updateTrayLanguage(language: 'en' | 'zh'): void {
+  currentLanguage = language
   updateTrayMenu()
 }
 
@@ -320,7 +340,7 @@ export function createTray(cbs: TrayCallbacks): Tray | null {
     }
 
     tray = new Tray(icon)
-    tray.setToolTip('Kiro 账号管理器')
+    tray.setToolTip(currentLanguage === 'en' ? 'Kiro Account Manager' : 'Kiro 账号管理器')
     tray.setContextMenu(buildTrayMenu())
 
     // 双击托盘图标显示主窗口
