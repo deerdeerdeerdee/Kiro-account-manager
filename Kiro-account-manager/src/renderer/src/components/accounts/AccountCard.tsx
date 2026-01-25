@@ -273,9 +273,15 @@ export const AccountCard = memo(function AccountCard({
 
   const isHighUsage = account.usage.percentUsed > 80
 
+  // 判断用量信息是否未知（limit >= 999999 表示 API 无法获取用量信息）
+  const isUsageUnknown = account.usage.limit >= 999999
+
   // UnauthorizedException 和 AccountSuspendedException 都表示账号被封禁/暂停
-  const isUnauthorized = account.lastError?.includes('UnauthorizedException') || 
-                         account.lastError?.includes('AccountSuspendedException')
+  // 但如果用量未知（isUsageUnknown），说明是特殊账号（API 不可用但 Token 可用），不判定为封禁
+  const isUnauthorized = !isUsageUnknown && (
+    account.lastError?.includes('UnauthorizedException') ||
+    account.lastError?.includes('AccountSuspendedException')
+  )
   
   // 封禁详情弹窗状态
   const [showBanDialog, setShowBanDialog] = useState(false)
@@ -475,7 +481,7 @@ export const AccountCard = memo(function AccountCard({
                  <div className={cn(
                     "text-[10px] font-medium px-2 py-0.5 rounded-full flex items-center gap-1 flex-shrink-0",
                     isUnauthorized ? "text-red-600 bg-red-100 dark:text-red-400 dark:bg-red-900/30" :
-                    account.status === 'active' ? "text-green-600 bg-green-100 dark:text-green-400 dark:bg-green-900/30" :
+                    account.status === 'active' || isUsageUnknown ? "text-green-600 bg-green-100 dark:text-green-400 dark:bg-green-900/30" :
                     account.status === 'error' ? "text-red-600 bg-red-100 dark:text-red-400 dark:bg-red-900/30" :
                     account.status === 'expired' ? "text-orange-600 bg-orange-100 dark:text-orange-400 dark:bg-orange-900/30" :
                     account.status === 'refreshing' ? "text-primary bg-primary/10" :
@@ -484,13 +490,13 @@ export const AccountCard = memo(function AccountCard({
                     {account.status === 'refreshing' && <Loader2 className="h-3 w-3 animate-spin" />}
                     {isUnauthorized && <AlertCircle className="h-3 w-3" />}
                     {isUnauthorized ? (
-                      <span 
-                        className="cursor-pointer hover:underline" 
+                      <span
+                        className="cursor-pointer hover:underline"
                         onClick={(e) => { e.stopPropagation(); setShowBanDialog(true); }}
                       >
                         {isEn ? 'Banned' : '已封禁'}
                       </span>
-                    ) : (isEn ? StatusLabelsEn : StatusLabelsZh)[account.status]}
+                    ) : isUsageUnknown ? (isEn ? 'Active' : '正常') : (isEn ? StatusLabelsEn : StatusLabelsZh)[account.status]}
                  </div>
               </div>
               <div className="flex items-center gap-2 mt-1">
@@ -532,31 +538,48 @@ export const AccountCard = memo(function AccountCard({
 
         {/* Usage Section */}
         <div className="bg-muted/30 p-3 rounded-lg space-y-2 border border-border/50">
-            <div className="flex justify-between items-end text-xs">
-                <span className="text-muted-foreground font-medium">{isEn ? 'Usage' : '使用量'}</span>
-                <span className={cn("font-mono font-medium", isHighUsage ? "text-amber-600" : "text-foreground")}>
-                   {(account.usage.percentUsed * 100).toFixed(usagePrecision ? 2 : 0)}%
-                </span>
-            </div>
-            <Progress
-              value={account.usage.percentUsed * 100}
-              className="h-1.5"
-              indicatorClassName={isHighUsage ? "bg-amber-500" : "bg-primary"}
-            />
-            <div className="flex justify-between text-[10px] text-muted-foreground pt-0.5">
-                <span>{formatUsage(account.usage.current)} / {formatUsage(account.usage.limit)}</span>
-                {account.usage.nextResetDate && (
-                  <span className="flex items-center gap-1">
-                    <Calendar className="h-3 w-3" />
-                     {(() => {
-                      const d = account.usage.nextResetDate as unknown
-                      try {
-                         return (typeof d === 'string' ? d : new Date(d as Date).toISOString()).split('T')[0]
-                      } catch { return 'Unknown' }
-                    })()} {isEn ? 'reset' : '重置'}
-                  </span>
-                )}
-            </div>
+            {isUsageUnknown ? (
+              // 用量信息不可用时的特殊显示
+              <div className="space-y-2">
+                <div className="flex justify-between items-center text-xs">
+                  <span className="text-muted-foreground font-medium">{isEn ? 'Usage' : '使用量'}</span>
+                  <span className="font-mono font-medium text-primary">∞</span>
+                </div>
+                <div className="flex items-center gap-1.5 text-[10px] text-amber-600 dark:text-amber-400">
+                  <Info className="h-3 w-3 flex-shrink-0" />
+                  <span>{isEn ? 'Usage info unavailable (Token works normally)' : '用量信息不可用（Token 可正常使用）'}</span>
+                </div>
+              </div>
+            ) : (
+              // 正常用量显示
+              <>
+                <div className="flex justify-between items-end text-xs">
+                    <span className="text-muted-foreground font-medium">{isEn ? 'Usage' : '使用量'}</span>
+                    <span className={cn("font-mono font-medium", isHighUsage ? "text-amber-600" : "text-foreground")}>
+                       {(account.usage.percentUsed * 100).toFixed(usagePrecision ? 2 : 0)}%
+                    </span>
+                </div>
+                <Progress
+                  value={account.usage.percentUsed * 100}
+                  className="h-1.5"
+                  indicatorClassName={isHighUsage ? "bg-amber-500" : "bg-primary"}
+                />
+                <div className="flex justify-between text-[10px] text-muted-foreground pt-0.5">
+                    <span>{formatUsage(account.usage.current)} / {formatUsage(account.usage.limit)}</span>
+                    {account.usage.nextResetDate && (
+                      <span className="flex items-center gap-1">
+                        <Calendar className="h-3 w-3" />
+                         {(() => {
+                          const d = account.usage.nextResetDate as unknown
+                          try {
+                             return (typeof d === 'string' ? d : new Date(d as Date).toISOString()).split('T')[0]
+                          } catch { return 'Unknown' }
+                        })()} {isEn ? 'reset' : '重置'}
+                      </span>
+                    )}
+                </div>
+              </>
+            )}
         </div>
 
         {/* Detailed Quotas - Compact list */}
@@ -690,8 +713,8 @@ export const AccountCard = memo(function AccountCard({
             </div>
         </div>
 
-        {/* Error Message (Non-banned) */}
-        {account.lastError && !isUnauthorized && (
+        {/* Error Message (Non-banned) - 不显示特殊账号（usageUnknown）的错误信息 */}
+        {account.lastError && !isUnauthorized && !isUsageUnknown && (
           <div className="bg-red-50 text-red-600 text-[10px] p-1.5 rounded flex items-center gap-1.5 truncate mt-1" title={account.lastError}>
              <AlertTriangle className="h-3 w-3 shrink-0" />
              <span className="truncate">{account.lastError}</span>
