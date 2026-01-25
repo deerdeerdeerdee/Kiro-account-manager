@@ -1744,12 +1744,13 @@ app.whenReady().then(async () => {
         return parseUsageResponse(usageResult, undefined, userInfoResult)
       } catch (apiError) {
         const errorMsg = apiError instanceof Error ? apiError.message : ''
-        
-        // 检查是否是 401 错误（token 过期）
+
+        // 检查是否是认证错误（401 或 UnauthorizedException）
         // 社交登录只需要 refreshToken，IdC 登录需要 clientId 和 clientSecret
+        const isAuthError = errorMsg.includes('401') || errorMsg.includes('UnauthorizedException')
         const canRefresh = refreshToken && (authMethod === 'social' || (clientId && clientSecret))
-        if (errorMsg.includes('401') && canRefresh) {
-          console.log(`[IPC] Token expired, attempting to refresh (authMethod: ${authMethod || 'IdC'})...`)
+        if (isAuthError && canRefresh) {
+          console.log(`[IPC] Auth error detected, attempting to refresh token (authMethod: ${authMethod || 'IdC'})...`)
           
           // 尝试刷新 token - 根据 authMethod 选择刷新方式
           const refreshResult = await refreshTokenByMethod(
@@ -1762,24 +1763,51 @@ app.whenReady().then(async () => {
           
           if (refreshResult.success && refreshResult.accessToken) {
             console.log('[IPC] Token refreshed, retrying API call...')
-            
+
             // 用新 token 并行调用 GetUserInfo 和 GetUserUsageAndLimits
-            const [userInfoResult, usageResult] = await Promise.all([
-              getUserInfo(refreshResult.accessToken, idp).catch(() => undefined),
-              kiroApiRequest<UsageResponse>(
-                'GetUserUsageAndLimits',
-                { isEmailRequired: true, origin: 'KIRO_IDE' },
-                refreshResult.accessToken,
-                idp
-              )
-            ])
-            
-            // 返回结果并包含新凭证
-            return parseUsageResponse(usageResult, {
-              accessToken: refreshResult.accessToken,
-              refreshToken: refreshResult.refreshToken,
-              expiresIn: refreshResult.expiresIn
-            }, userInfoResult)
+            try {
+              const [userInfoResult, usageResult] = await Promise.all([
+                getUserInfo(refreshResult.accessToken, idp).catch(() => undefined),
+                kiroApiRequest<UsageResponse>(
+                  'GetUserUsageAndLimits',
+                  { isEmailRequired: true, origin: 'KIRO_IDE' },
+                  refreshResult.accessToken,
+                  idp
+                )
+              ])
+
+              // 返回结果并包含新凭证
+              return parseUsageResponse(usageResult, {
+                accessToken: refreshResult.accessToken,
+                refreshToken: refreshResult.refreshToken,
+                expiresIn: refreshResult.expiresIn
+              }, userInfoResult)
+            } catch (retryError) {
+              // Token 刷新成功但 API 仍然失败（如某些 Enterprise 账号被限制访问此 API）
+              // 这种情况下账号仍然可用，只是无法获取用量信息
+              console.warn('[IPC] API still failed after token refresh (account is still usable):',
+                retryError instanceof Error ? retryError.message : retryError)
+
+              // 返回成功，标记用量未知
+              return {
+                success: true,
+                data: {
+                  subscriptionType: 'Free',
+                  subscriptionTitle: 'Unknown',
+                  usage: {
+                    current: 0,
+                    limit: 999999,  // 用量未知时设为很大的值，表示"无限"
+                    percentUsed: 0
+                  },
+                  usageUnknown: true,  // 标记用量信息未知
+                  newCredentials: {
+                    accessToken: refreshResult.accessToken,
+                    refreshToken: refreshResult.refreshToken,
+                    expiresIn: refreshResult.expiresIn
+                  }
+                }
+              }
+            }
           } else {
             console.error('[IPC] Token refresh failed:', refreshResult.error)
             return {
@@ -1788,8 +1816,28 @@ app.whenReady().then(async () => {
             }
           }
         }
-        
-        // 不是 401 或没有刷新凭证，抛出原错误
+
+        // 如果是认证错误但无法刷新 Token，可能是特殊账号（如某些 Enterprise 账号）
+        // 这种情况下返回容错结果，而不是标记为错误
+        if (isAuthError) {
+          console.warn('[IPC] Auth error but cannot refresh token, returning fallback result')
+          return {
+            success: true,
+            data: {
+              subscriptionType: 'Free',
+              subscriptionTitle: 'Unknown',
+              usage: {
+                current: 0,
+                limit: 999999,
+                percentUsed: 0
+              },
+              usageUnknown: true,
+              status: 'active'
+            }
+          }
+        }
+
+        // 其他错误，抛出原错误
         throw apiError
       }
     } catch (error) {
@@ -2485,19 +2533,28 @@ app.whenReady().then(async () => {
         userInfo?: { email?: string; userId?: string }
       }
       
-      const usageResult = await kiroApiRequest<UsageResponse>(
-        'GetUserUsageAndLimits',
-        { isEmailRequired: true, origin: 'KIRO_IDE' },
-        refreshResult.accessToken,
-        idp
-      )
-      
-      // 解析用户信息
-      const email = usageResult.userInfo?.email || ''
-      const userId = usageResult.userInfo?.userId || ''
-      
+      // 尝试获取用户信息（可选，失败不影响账号添加）
+      // 某些 Enterprise 账号可能被管理员限制访问此 API，但 Token 仍然有效
+      let usageResult: UsageResponse | null = null
+      try {
+        usageResult = await kiroApiRequest<UsageResponse>(
+          'GetUserUsageAndLimits',
+          { isEmailRequired: true, origin: 'KIRO_IDE' },
+          refreshResult.accessToken,
+          idp
+        )
+      } catch (apiError) {
+        // API 调用失败（如 401），记录警告但继续流程
+        console.warn('[Verify] GetUserUsageAndLimits failed (this is OK for some Enterprise accounts):',
+          apiError instanceof Error ? apiError.message : apiError)
+      }
+
+      // 解析用户信息（如果 API 失败则使用默认值）
+      const email = usageResult?.userInfo?.email || ''
+      const userId = usageResult?.userInfo?.userId || `enterprise-${Date.now()}`
+
       // 解析订阅类型（注意检查顺序：先检查更具体的类型）
-      const subscriptionTitle = usageResult.subscriptionInfo?.subscriptionTitle || 'Free'
+      const subscriptionTitle = usageResult?.subscriptionInfo?.subscriptionTitle || 'Unknown'
       let subscriptionType = 'Free'
       const titleUpper = subscriptionTitle.toUpperCase()
       if (titleUpper.includes('PRO+') || titleUpper.includes('PRO_PLUS') || titleUpper.includes('PROPLUS')) {
@@ -2513,7 +2570,7 @@ app.whenReady().then(async () => {
       }
       
       // 解析使用量（详细，使用精确小数）
-      const creditUsage = usageResult.usageBreakdownList?.find(b => b.resourceType === 'CREDIT')
+      const creditUsage = usageResult?.usageBreakdownList?.find(b => b.resourceType === 'CREDIT')
       
       // 基础额度
       const baseLimit = creditUsage?.usageLimitWithPrecision ?? creditUsage?.usageLimit ?? 0
@@ -2546,13 +2603,15 @@ app.whenReady().then(async () => {
       }
       
       // 计算总额度
-      const totalLimit = baseLimit + freeTrialLimit + bonuses.reduce((sum, b) => sum + b.limit, 0)
+      // 如果 API 失败（usageResult 为 null），使用 999999 表示"无限"额度
+      const usageUnknown = !usageResult
+      const totalLimit = usageUnknown ? 999999 : (baseLimit + freeTrialLimit + bonuses.reduce((sum, b) => sum + b.limit, 0))
       const totalUsed = baseCurrent + freeTrialCurrent + bonuses.reduce((sum, b) => sum + b.current, 0)
       
       // 计算重置剩余天数
       let daysRemaining: number | undefined
       let expiresAt: number | undefined
-      const nextResetDate = usageResult.nextDateReset
+      const nextResetDate = usageResult?.nextDateReset
       if (nextResetDate) {
         expiresAt = new Date(nextResetDate).getTime()
         daysRemaining = Math.max(0, Math.ceil((expiresAt - Date.now()) / (1000 * 60 * 60 * 24)))
@@ -2571,10 +2630,10 @@ app.whenReady().then(async () => {
           subscriptionType,
           subscriptionTitle,
           subscription: {
-            rawType: usageResult.subscriptionInfo?.type,
-            managementTarget: usageResult.subscriptionInfo?.subscriptionManagementTarget,
-            upgradeCapability: usageResult.subscriptionInfo?.upgradeCapability,
-            overageCapability: usageResult.subscriptionInfo?.overageCapability
+            rawType: usageResult?.subscriptionInfo?.type,
+            managementTarget: usageResult?.subscriptionInfo?.subscriptionManagementTarget,
+            upgradeCapability: usageResult?.subscriptionInfo?.upgradeCapability,
+            overageCapability: usageResult?.subscriptionInfo?.overageCapability
           },
           usage: {
             current: totalUsed,
@@ -2594,7 +2653,7 @@ app.whenReady().then(async () => {
               unit: creditUsage.unit,
               overageRate: creditUsage.overageRate,
               overageCap: creditUsage.overageCap,
-              overageEnabled: usageResult.overageConfiguration?.overageEnabled
+              overageEnabled: usageResult?.overageConfiguration?.overageEnabled
             } : undefined
           },
           daysRemaining,

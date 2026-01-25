@@ -1676,19 +1676,22 @@ export const useAccountsStore = create<AccountsStore>()((set, get) => ({
     console.log(`[AutoSwitch] Remaining: ${remaining}, Threshold: ${autoSwitchThreshold}`)
 
     // 检查是否需要切换
-    if (remaining <= autoSwitchThreshold) {
+    // 如果 limit 为 0，说明额度信息未知（如某些 Enterprise 账号），不触发自动切换
+    if (updatedAccount.usage.limit > 0 && remaining <= autoSwitchThreshold) {
       console.log(`[AutoSwitch] Account ${updatedAccount.email} reached threshold, switching...`)
-      
+
       // 查找可用的账号
       const availableAccount = Array.from(accounts.values()).find(acc => {
         // 排除当前账号
         if (acc.id === activeAccount.id) return false
         // 排除被封禁的账号
-        if (acc.lastError?.includes('UnauthorizedException') || 
+        if (acc.lastError?.includes('UnauthorizedException') ||
             acc.lastError?.includes('AccountSuspendedException')) return false
-        // 排除余额不足的账号
-        const accRemaining = acc.usage.limit - acc.usage.current
-        if (accRemaining <= autoSwitchThreshold) return false
+        // 排除余额不足的账号（limit 为 0 的账号视为额度未知，不排除）
+        if (acc.usage.limit > 0) {
+          const accRemaining = acc.usage.limit - acc.usage.current
+          if (accRemaining <= autoSwitchThreshold) return false
+        }
         return true
       })
 
