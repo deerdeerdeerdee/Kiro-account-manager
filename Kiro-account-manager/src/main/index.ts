@@ -4085,10 +4085,46 @@ app.whenReady().then(async () => {
     try {
       const server = initProxyServer()
       const pool = server.getAccountPool()
-      pool.clear()
-      for (const account of accounts) {
-        pool.addAccount(account)
+
+      // 保护逻辑：如果传入空数组但池中已有账号，不清空池
+      // 这可能是由于 token 刷新期间账号暂时被过滤掉导致的
+      if (accounts.length === 0 && pool.size > 0) {
+        return { success: true, accountCount: pool.size, skipped: true }
       }
+
+      // 使用原子方式更新账号池，避免竞态条件
+      const newAccountIds = new Set(accounts.map(a => a.id))
+      const existingAccountIds = new Set(pool.getAllAccounts().map(a => a.id))
+
+      // 删除不再存在的账号
+      for (const existingId of existingAccountIds) {
+        if (!newAccountIds.has(existingId)) {
+          pool.removeAccount(existingId)
+        }
+      }
+
+      // 添加或更新账号
+      for (const account of accounts) {
+        if (existingAccountIds.has(account.id)) {
+          // 更新现有账号（保留运行时状态如 errorCount, cooldownUntil 等）
+          const existing = pool.getAccount(account.id)
+          if (existing) {
+            pool.updateAccount(account.id, {
+              ...account,
+              // 保留运行时状态
+              errorCount: existing.errorCount,
+              cooldownUntil: existing.cooldownUntil,
+              isAvailable: existing.isAvailable,
+              requestCount: existing.requestCount,
+              lastUsed: existing.lastUsed
+            })
+          }
+        } else {
+          // 添加新账号
+          pool.addAccount(account)
+        }
+      }
+
       return { success: true, accountCount: pool.size }
     } catch (error) {
       console.error('[ProxyServer] Sync accounts failed:', error)
