@@ -13,7 +13,7 @@ import type {
 } from './types'
 import { AccountPool } from './accountPool'
 import { callKiroApiStream, callKiroApi, fetchKiroModels, type KiroModel } from './kiroApi'
-import { proxyLogger } from './logger'
+import { proxyLogger, generateTraceId } from './logger'
 import {
   openaiToKiro,
   claudeToKiro,
@@ -370,22 +370,22 @@ export class ProxyServer {
   }
 
   // 刷新 Token
-  private async refreshToken(account: ProxyAccount): Promise<boolean> {
+  private async refreshToken(account: ProxyAccount, traceId?: string): Promise<boolean> {
     if (!this.events.onTokenRefresh) {
-      console.warn('[ProxyServer] No token refresh callback configured')
+      proxyLogger.warnWithTrace(traceId || '', 'ProxyServer', 'No token refresh callback configured')
       return false
     }
 
     // 防止并发刷新
     if (this.refreshingTokens.has(account.id)) {
-      console.log(`[ProxyServer] Token refresh already in progress for ${account.email || account.id}`)
+      proxyLogger.debugWithTrace(traceId || '', 'ProxyServer', `Token refresh already in progress for ${account.email || account.id}`)
       // 等待刷新完成
       await new Promise(resolve => setTimeout(resolve, 1000))
       return !this.isTokenExpiringSoon(this.accountPool.getAccount(account.id) || account)
     }
 
     this.refreshingTokens.add(account.id)
-    console.log(`[ProxyServer] Refreshing token for ${account.email || account.id}`)
+    proxyLogger.infoWithTrace(traceId || '', 'ProxyServer', `Refreshing token for ${account.email || account.id}`)
 
     try {
       const result = await this.events.onTokenRefresh(account)
@@ -403,15 +403,21 @@ export class ProxyServer {
           refreshToken: result.refreshToken || account.refreshToken,
           expiresAt: result.expiresAt
         })
-        console.log(`[ProxyServer] Token refreshed for ${account.email || account.id}`)
+        proxyLogger.infoWithTrace(traceId || '', 'ProxyServer', `Token refreshed for ${account.email || account.id}`, {
+          newExpiresAt: result.expiresAt ? new Date(result.expiresAt).toISOString() : null
+        })
         return true
       } else {
-        console.error(`[ProxyServer] Token refresh failed for ${account.email || account.id}: ${result.error}`)
+        proxyLogger.errorWithTrace(traceId || '', 'ProxyServer', `Token refresh failed for ${account.email || account.id}`, {
+          error: result.error
+        })
         this.accountPool.markNeedsRefresh(account.id)
         return false
       }
     } catch (error) {
-      console.error(`[ProxyServer] Token refresh error for ${account.email || account.id}:`, error)
+      proxyLogger.errorWithTrace(traceId || '', 'ProxyServer', `Token refresh error for ${account.email || account.id}`, {
+        error: error instanceof Error ? error.message : String(error)
+      })
       this.accountPool.markNeedsRefresh(account.id)
       return false
     } finally {
@@ -420,19 +426,26 @@ export class ProxyServer {
   }
 
   // 获取可用账号（包含 Token 刷新检查）
-  private async getAvailableAccount(): Promise<ProxyAccount | null> {
+  private async getAvailableAccount(traceId: string): Promise<ProxyAccount | null> {
     let account: ProxyAccount | null
-    
+
+    proxyLogger.debugWithTrace(traceId, 'ProxyServer', 'Getting available account', {
+      enableMultiAccount: this.config.enableMultiAccount,
+      selectedAccountIds: this.config.selectedAccountIds,
+      poolSize: this.accountPool.size,
+      availableCount: this.accountPool.availableCount
+    })
+
     // 检查是否启用多账号轮询
     if (this.config.enableMultiAccount) {
-      account = this.accountPool.getNextAccount()
+      account = this.accountPool.getNextAccount(traceId)
     } else {
       // 禁用多账号轮询时，优先使用指定的账号
       if (this.config.selectedAccountIds && this.config.selectedAccountIds.length > 0) {
         // 使用指定的第一个账号
         account = this.accountPool.getAccount(this.config.selectedAccountIds[0])
         if (!account) {
-          console.log(`[ProxyServer] Selected account ${this.config.selectedAccountIds[0]} not found, using first available`)
+          proxyLogger.warnWithTrace(traceId, 'ProxyServer', `Selected account ${this.config.selectedAccountIds[0]} not found, using first available`)
           const allAccounts = this.accountPool.getAllAccounts()
           account = allAccounts.length > 0 ? allAccounts[0] : null
         }
@@ -442,16 +455,46 @@ export class ProxyServer {
         account = allAccounts.length > 0 ? allAccounts[0] : null
       }
     }
-    
-    if (!account) return null
+
+    if (!account) {
+      // 收集所有账号的详细状态
+      const allAccounts = this.accountPool.getAllAccounts()
+      const accountsStatus = allAccounts.map(acc => {
+        const now = Date.now()
+        return {
+          email: acc.email || acc.id,
+          isAvailable: acc.isAvailable,
+          errorCount: acc.errorCount || 0,
+          cooldownUntil: acc.cooldownUntil ? new Date(acc.cooldownUntil).toISOString() : null,
+          expiresAt: acc.expiresAt ? new Date(acc.expiresAt).toISOString() : null,
+          tokenExpiresIn: acc.expiresAt ? Math.round((acc.expiresAt - now) / 1000) : null,
+          tokenStatus: acc.expiresAt ? (acc.expiresAt > now ? 'valid' : 'EXPIRED') : 'unknown'
+        }
+      })
+
+      proxyLogger.errorWithTrace(traceId, 'ProxyServer', '503 ERROR: No available accounts', {
+        poolSize: this.accountPool.size,
+        availableCount: this.accountPool.availableCount,
+        multiAccountMode: this.config.enableMultiAccount,
+        selectedAccountIds: this.config.selectedAccountIds,
+        accountsStatus
+      })
+      return null
+    }
+
+    proxyLogger.debugWithTrace(traceId, 'ProxyServer', `Account selected: ${account.email || account.id}`, {
+      accountId: account.id,
+      expiresAt: account.expiresAt ? new Date(account.expiresAt).toISOString() : null
+    })
 
     // 检查是否需要刷新 Token
     if (this.isTokenExpiringSoon(account)) {
-      const refreshed = await this.refreshToken(account)
+      proxyLogger.infoWithTrace(traceId, 'ProxyServer', `Token expiring soon for ${account.email || account.id}, attempting refresh`)
+      const refreshed = await this.refreshToken(account, traceId)
       if (!refreshed) {
         // 刷新失败，如果启用多账号才尝试获取下一个账号
         if (this.config.enableMultiAccount) {
-          return this.accountPool.getNextAccount()
+          return this.accountPool.getNextAccount(traceId)
         }
         return null
       }
@@ -874,19 +917,26 @@ export class ProxyServer {
 
   // 处理 OpenAI Chat Completions 请求
   private async handleOpenAIChat(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    const traceId = generateTraceId()
     const body = await this.readBody(req)
     const request: OpenAIChatRequest = JSON.parse(body)
+
+    proxyLogger.infoWithTrace(traceId, 'ProxyServer', 'OpenAI Chat request received', {
+      model: request.model,
+      stream: request.stream
+    })
 
     this.recordNewRequest()
     this.events.onRequest?.({ path: '/v1/chat/completions', method: 'POST' })
 
     // 获取账号（包含 Token 刷新检查）
-    const account = await this.getAvailableAccount()
+    const account = await this.getAvailableAccount(traceId)
     if (!account) {
       this.recordRequestFailed()
       this.sendError(res, 503, 'No available accounts')
       this.events.onResponse?.({ path: '/v1/chat/completions', status: 503, error: 'No available accounts' })
       this.recordRequest({ path: '/v1/chat/completions', model: request.model, success: false, error: 'No available accounts' })
+      proxyLogger.errorWithTrace(traceId, 'ProxyServer', 'Request failed: No available accounts', { model: request.model })
       return
     }
 
@@ -1139,19 +1189,26 @@ export class ProxyServer {
 
   // 处理 Claude Messages 请求
   private async handleClaudeMessages(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    const traceId = generateTraceId()
     const body = await this.readBody(req)
     const request: ClaudeRequest = JSON.parse(body)
+
+    proxyLogger.infoWithTrace(traceId, 'ProxyServer', 'Claude Messages request received', {
+      model: request.model,
+      stream: request.stream
+    })
 
     this.recordNewRequest()
     this.events.onRequest?.({ path: '/v1/messages', method: 'POST' })
 
     // 获取账号（包含 Token 刷新检查）
-    const account = await this.getAvailableAccount()
+    const account = await this.getAvailableAccount(traceId)
     if (!account) {
       this.recordRequestFailed()
       this.sendError(res, 503, 'No available accounts')
       this.events.onResponse?.({ path: '/v1/messages', status: 503, error: 'No available accounts' })
       this.recordRequest({ path: '/v1/messages', model: request.model, success: false, error: 'No available accounts' })
+      proxyLogger.errorWithTrace(traceId, 'ProxyServer', 'Request failed: No available accounts', { model: request.model })
       return
     }
 
