@@ -307,11 +307,29 @@ export function ProxyPanel() {
       }
     })
 
+    // 监听存储 EPERM 警告（文件权限问题，通常由杀毒软件导致）
+    const unsubEpermWarning = window.api.onStoreEpermWarning?.((data) => {
+      console.warn('[Store] EPERM warning:', data)
+      setError(isEn
+        ? `File permission issue: Please add "${data.path}" to your antivirus exclusion list.`
+        : `文件权限问题：请将 "${data.path}" 添加到杀毒软件排除列表。`)
+    })
+
+    // 监听存储写入错误
+    const unsubWriteError = window.api.onStoreWriteError?.((data) => {
+      console.error('[Store] Write error:', data)
+      setError(isEn
+        ? `Failed to save data (${data.key}): ${data.error}`
+        : `保存数据失败 (${data.key}): ${data.error}`)
+    })
+
     return () => {
       unsubRequest()
       unsubResponse()
       unsubError()
       unsubStatus()
+      unsubEpermWarning?.()
+      unsubWriteError?.()
     }
   }, [fetchStatus])
 

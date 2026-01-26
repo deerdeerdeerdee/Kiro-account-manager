@@ -656,6 +656,14 @@ interface KiroApi {
 
   // 发送关闭确认对话框响应
   sendCloseConfirmResponse: (action: 'minimize' | 'quit' | 'cancel', rememberChoice: boolean) => void
+
+  // ============ 存储错误处理 ============
+
+  // 监听存储 EPERM 警告（文件权限问题）
+  onStoreEpermWarning: (callback: (data: { message: string; path: string }) => void) => () => void
+
+  // 监听存储写入错误
+  onStoreWriteError: (callback: (data: { error: string; key: string }) => void) => () => void
 }
 
 declare global {
