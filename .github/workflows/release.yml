@@ -11,9 +11,7 @@ jobs:
 
     strategy:
       matrix:
-        os: [windows-latest]  # 目前只构建 Windows 版本
-        # 如需构建其他平台，取消下面的注释
-        # os: [windows-latest, macos-latest, ubuntu-latest]
+        os: [windows-latest, macos-latest, ubuntu-latest]  # 构建所有平台
 
     steps:
       - name: Checkout code
@@ -108,6 +106,8 @@ jobs:
 
             ### 下载
             - Windows: `kiro-account-manager-${{ steps.get_version.outputs.VERSION }}-x64-setup.exe`
+            - macOS: `kiro-account-manager-${{ steps.get_version.outputs.VERSION }}-arm64.dmg`
+            - Linux: `kiro-account-manager-${{ steps.get_version.outputs.VERSION }}-x86_64.AppImage`
 
             ### 更新说明
             自动构建发布
