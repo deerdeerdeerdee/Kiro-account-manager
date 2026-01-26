@@ -1,5 +1,6 @@
 // 多账号轮询管理器
 import type { ProxyAccount, AccountStats } from './types'
+import { proxyLogger } from './logger'
 
 export interface AccountPoolConfig {
   cooldownMs: number // 错误后冷却时间
@@ -61,9 +62,10 @@ export class AccountPool {
   }
 
   // 获取下一个可用账号（轮询）
-  getNextAccount(): ProxyAccount | null {
+  getNextAccount(traceId?: string): ProxyAccount | null {
     const accountList = Array.from(this.accounts.values())
     if (accountList.length === 0) {
+      proxyLogger.warnWithTrace(traceId || '', 'AccountPool', 'getNextAccount: No accounts in pool')
       return null
     }
 
@@ -76,14 +78,18 @@ export class AccountPool {
       this.currentIndex = (this.currentIndex + 1) % accountList.length
 
       // 检查账号是否可用
-      if (this.isAccountAvailable(account, now)) {
+      const availableStatus = this.getAccountAvailabilityStatus(account, now)
+      if (availableStatus.available) {
+        proxyLogger.debugWithTrace(traceId || '', 'AccountPool', `Account selected: ${account.email || account.id}`)
         return account
       }
+      proxyLogger.debugWithTrace(traceId || '', 'AccountPool', `Account ${account.email || account.id} unavailable: ${availableStatus.reason}`)
 
       attempts++
     }
 
     // 没有可用账号，返回冷却时间最短的
+    proxyLogger.warnWithTrace(traceId || '', 'AccountPool', 'No available accounts, returning account with shortest cooldown')
     return this.getAccountWithShortestCooldown(accountList, now)
   }
 
@@ -120,22 +126,32 @@ export class AccountPool {
 
   // 检查账号是否可用
   private isAccountAvailable(account: ProxyAccount, now: number): boolean {
+    return this.getAccountAvailabilityStatus(account, now).available
+  }
+
+  // 获取账号可用性状态及原因
+  private getAccountAvailabilityStatus(account: ProxyAccount, now: number): { available: boolean; reason: string } {
     // 检查冷却时间
     if (account.cooldownUntil && account.cooldownUntil > now) {
-      return false
+      const remainingMs = account.cooldownUntil - now
+      return { available: false, reason: `cooldown (${Math.ceil(remainingMs / 1000)}s remaining)` }
     }
 
     // 检查错误计数
     if ((account.errorCount || 0) >= this.config.maxErrorCount) {
-      return false
+      return { available: false, reason: `too many errors (${account.errorCount}/${this.config.maxErrorCount})` }
     }
 
     // 检查 token 是否过期
     if (account.expiresAt && account.expiresAt < now) {
-      return false
+      return { available: false, reason: `token expired (expired ${Math.ceil((now - account.expiresAt) / 1000)}s ago)` }
     }
 
-    return account.isAvailable !== false
+    if (account.isAvailable === false) {
+      return { available: false, reason: 'isAvailable flag is false (needs refresh)' }
+    }
+
+    return { available: true, reason: 'ok' }
   }
 
   // 获取冷却时间最短的账号
