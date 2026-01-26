@@ -3,11 +3,21 @@ import * as fs from 'fs'
 import * as path from 'path'
 import { app } from 'electron'
 
+// TraceId 生成器
+let traceIdCounter = 0
+export function generateTraceId(): string {
+  const timestamp = Date.now().toString(36)
+  const counter = (++traceIdCounter % 0xffff).toString(16).padStart(4, '0')
+  const random = Math.random().toString(36).substring(2, 6)
+  return `${timestamp}-${counter}-${random}`
+}
+
 export interface LogEntry {
   timestamp: string
   level: 'DEBUG' | 'INFO' | 'WARN' | 'ERROR'
   category: string
   message: string
+  traceId?: string
   data?: unknown
 }
 
@@ -17,13 +27,15 @@ export interface LoggerConfig {
   maxFileSize?: number // 最大文件大小 (bytes)
   maxFiles?: number // 最大文件数量
   logToConsole?: boolean
+  debugLogEnabled?: boolean // 调试日志文件开关
 }
 
 const DEFAULT_CONFIG: LoggerConfig = {
   enabled: false,
   maxFileSize: 10 * 1024 * 1024, // 10MB
   maxFiles: 5,
-  logToConsole: true
+  logToConsole: true,
+  debugLogEnabled: true // 默认开启调试日志
 }
 
 class ProxyLogger {
@@ -31,6 +43,8 @@ class ProxyLogger {
   private logStream: fs.WriteStream | null = null
   private currentLogFile: string = ''
   private currentFileSize: number = 0
+  private debugLogStream: fs.WriteStream | null = null
+  private debugLogFile: string = ''
 
   constructor() {
     this.config = { ...DEFAULT_CONFIG }
@@ -38,7 +52,7 @@ class ProxyLogger {
 
   configure(config: Partial<LoggerConfig>): void {
     this.config = { ...this.config, ...config }
-    
+
     if (this.config.enabled && !this.config.logDir) {
       // 默认日志目录
       this.config.logDir = path.join(app.getPath('userData'), 'logs', 'proxy')
@@ -48,6 +62,42 @@ class ProxyLogger {
       this.initLogFile()
     } else {
       this.close()
+    }
+
+    // 初始化调试日志文件
+    if (this.config.debugLogEnabled) {
+      this.initDebugLogFile()
+    }
+  }
+
+  private initDebugLogFile(): void {
+    try {
+      const debugLogDir = path.join(app.getPath('userData'), 'logs')
+      fs.mkdirSync(debugLogDir, { recursive: true })
+
+      // 使用固定文件名，方便查看
+      this.debugLogFile = path.join(debugLogDir, 'proxy-debug.log')
+
+      // 如果文件超过 50MB，清空重新开始
+      try {
+        const stats = fs.statSync(this.debugLogFile)
+        if (stats.size > 50 * 1024 * 1024) {
+          fs.unlinkSync(this.debugLogFile)
+        }
+      } catch {
+        // 文件不存在，忽略
+      }
+
+      this.debugLogStream = fs.createWriteStream(this.debugLogFile, { flags: 'a' })
+      console.log(`[ProxyLogger] Debug log file: ${this.debugLogFile}`)
+    } catch (error) {
+      console.error('[ProxyLogger] Failed to init debug log file:', error)
+    }
+  }
+
+  private writeDebugLog(line: string): void {
+    if (this.config.debugLogEnabled && this.debugLogStream) {
+      this.debugLogStream.write(line)
     }
   }
 
@@ -108,8 +158,10 @@ class ProxyLogger {
   private write(entry: LogEntry): void {
     const line = JSON.stringify(entry) + '\n'
 
+    // 格式化控制台输出（包含 traceId）
     if (this.config.logToConsole) {
-      const prefix = `[${entry.level}][${entry.category}]`
+      const tracePrefix = entry.traceId ? `[${entry.traceId}]` : ''
+      const prefix = `[${entry.level}][${entry.category}]${tracePrefix}`
       if (entry.level === 'ERROR') {
         console.error(prefix, entry.message, entry.data || '')
       } else if (entry.level === 'WARN') {
@@ -119,6 +171,9 @@ class ProxyLogger {
       }
     }
 
+    // 写入调试日志文件
+    this.writeDebugLog(line)
+
     if (this.config.enabled && this.logStream) {
       this.logStream.write(line)
       this.currentFileSize += Buffer.byteLength(line)
@@ -127,6 +182,51 @@ class ProxyLogger {
 
     // 同时添加到内存存储（用于 UI 显示）
     proxyLogStore.add(entry)
+  }
+
+  // 带 traceId 的日志方法
+  debugWithTrace(traceId: string, category: string, message: string, data?: unknown): void {
+    this.write({
+      timestamp: new Date().toISOString(),
+      level: 'DEBUG',
+      category,
+      message,
+      traceId,
+      data
+    })
+  }
+
+  infoWithTrace(traceId: string, category: string, message: string, data?: unknown): void {
+    this.write({
+      timestamp: new Date().toISOString(),
+      level: 'INFO',
+      category,
+      message,
+      traceId,
+      data
+    })
+  }
+
+  warnWithTrace(traceId: string, category: string, message: string, data?: unknown): void {
+    this.write({
+      timestamp: new Date().toISOString(),
+      level: 'WARN',
+      category,
+      message,
+      traceId,
+      data
+    })
+  }
+
+  errorWithTrace(traceId: string, category: string, message: string, data?: unknown): void {
+    this.write({
+      timestamp: new Date().toISOString(),
+      level: 'ERROR',
+      category,
+      message,
+      traceId,
+      data
+    })
   }
 
   debug(category: string, message: string, data?: unknown): void {
@@ -203,15 +303,32 @@ class ProxyLogger {
     }
   }
 
+  // 带 traceId 的 Token 刷新记录
+  tokenRefreshWithTrace(traceId: string, accountId: string, success: boolean, error?: string): void {
+    if (success) {
+      this.infoWithTrace(traceId, 'TokenRefresh', `Account ${accountId} refreshed successfully`)
+    } else {
+      this.errorWithTrace(traceId, 'TokenRefresh', `Account ${accountId} refresh failed`, { error })
+    }
+  }
+
   close(): void {
     if (this.logStream) {
       this.logStream.end()
       this.logStream = null
     }
+    if (this.debugLogStream) {
+      this.debugLogStream.end()
+      this.debugLogStream = null
+    }
   }
 
   getLogDir(): string | undefined {
     return this.config.logDir
+  }
+
+  getDebugLogFile(): string {
+    return this.debugLogFile
   }
 }
 
