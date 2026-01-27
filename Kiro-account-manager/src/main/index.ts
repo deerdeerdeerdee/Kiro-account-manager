@@ -779,7 +779,7 @@ async function initStore(): Promise<void> {
           if (now - lastEpermNotifyTime > 5 * 60 * 1000) {
             lastEpermNotifyTime = now
             mainWindow?.webContents.send('store-eperm-warning', {
-              message: 'File write permission issue detected. Please add the app data folder to your antivirus exclusion list.',
+              message: 'Data saved using fallback mode. For better performance, add the app data folder to your antivirus exclusion list.',
               path: path.dirname(storeInstance.path)
             })
           }
