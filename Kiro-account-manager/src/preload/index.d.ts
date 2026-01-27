@@ -552,6 +552,14 @@ interface KiroApi {
   // 从反代池移除账号
   proxyRemoveAccount: (accountId: string) => Promise<{ success: boolean; accountCount?: number; error?: string }>
 
+  // 更新反代池中单个账号的 Token（用于 Token 刷新后同步）
+  proxyUpdateAccountToken: (data: {
+    id: string
+    accessToken: string
+    refreshToken?: string
+    expiresAt: number
+  }) => Promise<{ success: boolean; updated?: boolean; error?: string }>
+
   // 同步账号到反代池（批量更新）
   proxySyncAccounts: (accounts: Array<{ id: string; email?: string; accessToken: string; refreshToken?: string; profileArn?: string; expiresAt?: number }>) => Promise<{ success: boolean; accountCount?: number; error?: string }>
 

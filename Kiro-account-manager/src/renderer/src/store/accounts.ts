@@ -952,6 +952,10 @@ export const useAccountsStore = create<AccountsStore>()((set, get) => ({
       const result = await window.api.refreshAccountToken(account)
 
       if (result.success && result.data) {
+        const newExpiresAt = Date.now() + result.data!.expiresIn * 1000
+        const newAccessToken = result.data!.accessToken
+        const newRefreshToken = result.data!.refreshToken || account.credentials.refreshToken
+
         set((state) => {
           const accounts = new Map(state.accounts)
           const acc = accounts.get(id)
@@ -960,10 +964,10 @@ export const useAccountsStore = create<AccountsStore>()((set, get) => ({
               ...acc,
               credentials: {
                 ...acc.credentials,
-                accessToken: result.data!.accessToken,
+                accessToken: newAccessToken,
                 // 如果返回了新的 refreshToken，更新它
-                refreshToken: result.data!.refreshToken || acc.credentials.refreshToken,
-                expiresAt: Date.now() + result.data!.expiresIn * 1000
+                refreshToken: newRefreshToken,
+                expiresAt: newExpiresAt
               },
               status: 'active',
               lastError: undefined,
@@ -973,6 +977,20 @@ export const useAccountsStore = create<AccountsStore>()((set, get) => ({
           return { accounts }
         })
         get().saveToStorage()
+
+        // 同步更新到反代账号池（如果反代服务正在运行）
+        try {
+          await window.api.proxyUpdateAccountToken({
+            id,
+            accessToken: newAccessToken,
+            refreshToken: newRefreshToken,
+            expiresAt: newExpiresAt
+          })
+        } catch (e) {
+          // 反代服务可能未启动，忽略错误
+          console.log('[RefreshToken] Failed to sync to proxy pool (proxy may not be running):', e)
+        }
+
         return true
       } else {
         updateAccountStatus(id, 'error', result.error?.message)
@@ -2034,6 +2052,22 @@ export const useAccountsStore = create<AccountsStore>()((set, get) => ({
 
       return { accounts }
     })
+
+    // 如果 Token 被刷新，同步到反代账号池
+    const refreshData = data.data as { accessToken?: string; refreshToken?: string; expiresIn?: number } | undefined
+    if (refreshData?.accessToken && refreshData?.expiresIn) {
+      const now = Date.now()
+      try {
+        window.api.proxyUpdateAccountToken({
+          id,
+          accessToken: refreshData.accessToken,
+          refreshToken: refreshData.refreshToken,
+          expiresAt: now + refreshData.expiresIn * 1000
+        })
+      } catch (e) {
+        console.log('[BackgroundRefresh] Failed to sync to proxy pool:', e)
+      }
+    }
   },
 
   // 处理后台检查结果（由 App.tsx 调用）

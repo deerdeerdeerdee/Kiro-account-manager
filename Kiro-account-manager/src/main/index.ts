@@ -4113,6 +4113,40 @@ app.whenReady().then(async () => {
     }
   })
 
+  // IPC: 更新反代池中单个账号的 Token（用于 Token 刷新后同步）
+  ipcMain.handle('proxy-update-account-token', (_event, data: {
+    id: string
+    accessToken: string
+    refreshToken?: string
+    expiresAt: number
+  }) => {
+    try {
+      if (!proxyServer) {
+        // 反代服务未启动，无需更新
+        return { success: true, updated: false }
+      }
+      const pool = proxyServer.getAccountPool()
+      const existing = pool.getAccount(data.id)
+      if (existing) {
+        pool.updateAccount(data.id, {
+          accessToken: data.accessToken,
+          refreshToken: data.refreshToken || existing.refreshToken,
+          expiresAt: data.expiresAt,
+          // 重置错误计数，因为 Token 已刷新
+          errorCount: 0,
+          cooldownUntil: undefined,
+          isAvailable: true
+        })
+        console.log(`[ProxyServer] Updated token for account: ${existing.email || data.id}`)
+        return { success: true, updated: true }
+      }
+      return { success: true, updated: false }
+    } catch (error) {
+      console.error('[ProxyServer] Update account token failed:', error)
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to update account token' }
+    }
+  })
+
   // IPC: 同步账号到反代池（批量更新）
   ipcMain.handle('proxy-sync-accounts', (_event, accounts: ProxyAccount[]) => {
     try {
