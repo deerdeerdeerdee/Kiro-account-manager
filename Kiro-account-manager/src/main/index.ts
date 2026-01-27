@@ -1250,6 +1250,32 @@ app.whenReady().then(async () => {
     }
   })
 
+  // ============ 开机自启动相关 IPC ============
+
+  // IPC: 获取开机自启动状态
+  ipcMain.handle('get-auto-launch', () => {
+    const settings = app.getLoginItemSettings()
+    return {
+      enabled: settings.openAtLogin
+    }
+  })
+
+  // IPC: 设置开机自启动
+  ipcMain.handle('set-auto-launch', (_event, enabled: boolean) => {
+    try {
+      app.setLoginItemSettings({
+        openAtLogin: enabled,
+        // Windows 下可以设置启动参数，--hidden 表示启动时隐藏窗口
+        args: enabled ? ['--hidden'] : []
+      })
+      console.log(`[AutoLaunch] Set to ${enabled}`)
+      return { success: true, enabled }
+    } catch (error) {
+      console.error('[AutoLaunch] Failed to set:', error)
+      return { success: false, error: error instanceof Error ? error.message : 'Unknown error' }
+    }
+  })
+
   // IPC: 获取应用版本
   ipcMain.handle('get-app-version', () => {
     return app.getVersion()
