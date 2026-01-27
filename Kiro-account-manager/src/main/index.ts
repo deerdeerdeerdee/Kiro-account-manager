@@ -974,7 +974,14 @@ function createWindow(): void {
   mainWindow.on('ready-to-show', () => {
     // 设置带版本号的标题（HTML 加载后会覆盖初始标题）
     mainWindow?.setTitle(`Kiro 账号管理器 v${app.getVersion()}`)
-    mainWindow?.show()
+
+    // 检查是否是开机自启动（带 --hidden 参数）
+    const isHiddenStart = process.argv.includes('--hidden')
+    if (!isHiddenStart) {
+      mainWindow?.show()
+    } else {
+      console.log('[AutoLaunch] Started in hidden mode (tray only)')
+    }
     
     // 检查代理服务自启动配置
     setTimeout(async () => {
