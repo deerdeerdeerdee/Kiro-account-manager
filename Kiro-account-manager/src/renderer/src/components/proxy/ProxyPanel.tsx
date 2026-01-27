@@ -307,12 +307,12 @@ export function ProxyPanel() {
       }
     })
 
-    // 监听存储 EPERM 警告（文件权限问题，通常由杀毒软件导致）
+    // 监听存储 EPERM 警告（文件权限问题，通常由杀毒软件导致，但数据已通过回退方式保存）
     const unsubEpermWarning = window.api.onStoreEpermWarning?.((data) => {
       console.warn('[Store] EPERM warning:', data)
       setError(isEn
-        ? `File permission issue: Please add "${data.path}" to your antivirus exclusion list.`
-        : `文件权限问题：请将 "${data.path}" 添加到杀毒软件排除列表。`)
+        ? `Data saved (fallback mode). For better performance, add "${data.path}" to your antivirus exclusion list.`
+        : `数据已保存（回退模式）。建议将 "${data.path}" 添加到杀毒软件排除列表以获得更好性能。`)
     })
 
     // 监听存储写入错误
