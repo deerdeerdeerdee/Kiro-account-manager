@@ -657,6 +657,14 @@ interface KiroApi {
   // 发送关闭确认对话框响应
   sendCloseConfirmResponse: (action: 'minimize' | 'quit' | 'cancel', rememberChoice: boolean) => void
 
+  // ============ 开机自启动相关 API ============
+
+  // 获取开机自启动状态
+  getAutoLaunch: () => Promise<{ enabled: boolean }>
+
+  // 设置开机自启动
+  setAutoLaunch: (enabled: boolean) => Promise<{ success: boolean; enabled?: boolean; error?: string }>
+
   // ============ 存储错误处理 ============
 
   // 监听存储 EPERM 警告（文件权限问题）

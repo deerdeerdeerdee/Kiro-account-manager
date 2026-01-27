@@ -974,7 +974,14 @@ function createWindow(): void {
   mainWindow.on('ready-to-show', () => {
     // 设置带版本号的标题（HTML 加载后会覆盖初始标题）
     mainWindow?.setTitle(`Kiro 账号管理器 v${app.getVersion()}`)
-    mainWindow?.show()
+
+    // 检查是否是开机自启动（带 --hidden 参数）
+    const isHiddenStart = process.argv.includes('--hidden')
+    if (!isHiddenStart) {
+      mainWindow?.show()
+    } else {
+      console.log('[AutoLaunch] Started in hidden mode (tray only)')
+    }
     
     // 检查代理服务自启动配置
     setTimeout(async () => {
@@ -1247,6 +1254,32 @@ app.whenReady().then(async () => {
     if (action === 'minimize' && rememberChoice) {
       traySettings.closeAction = 'minimize'
       saveTraySettings()
+    }
+  })
+
+  // ============ 开机自启动相关 IPC ============
+
+  // IPC: 获取开机自启动状态
+  ipcMain.handle('get-auto-launch', () => {
+    const settings = app.getLoginItemSettings()
+    return {
+      enabled: settings.openAtLogin
+    }
+  })
+
+  // IPC: 设置开机自启动
+  ipcMain.handle('set-auto-launch', (_event, enabled: boolean) => {
+    try {
+      app.setLoginItemSettings({
+        openAtLogin: enabled,
+        // Windows 下可以设置启动参数，--hidden 表示启动时隐藏窗口
+        args: enabled ? ['--hidden'] : []
+      })
+      console.log(`[AutoLaunch] Set to ${enabled}`)
+      return { success: true, enabled }
+    } catch (error) {
+      console.error('[AutoLaunch] Failed to set:', error)
+      return { success: false, error: error instanceof Error ? error.message : 'Unknown error' }
     }
   })
 

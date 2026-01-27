@@ -156,6 +156,10 @@ export function SettingsPage() {
   })
   const [trayLoading, setTrayLoading] = useState(true)
 
+  // 开机自启动状态
+  const [autoLaunchEnabled, setAutoLaunchEnabled] = useState(false)
+  const [autoLaunchLoading, setAutoLaunchLoading] = useState(true)
+
   // 加载托盘设置
   useEffect(() => {
     const loadTraySettings = async () => {
@@ -171,6 +175,21 @@ export function SettingsPage() {
     loadTraySettings()
   }, [])
 
+  // 加载开机自启动设置
+  useEffect(() => {
+    const loadAutoLaunch = async () => {
+      try {
+        const result = await window.api.getAutoLaunch()
+        setAutoLaunchEnabled(result.enabled)
+      } catch (error) {
+        console.error('Failed to load auto launch settings:', error)
+      } finally {
+        setAutoLaunchLoading(false)
+      }
+    }
+    loadAutoLaunch()
+  }, [])
+
   // 保存托盘设置
   const handleTraySettingChange = async (key: keyof typeof traySettings, value: boolean | string) => {
     const newSettings = { ...traySettings, [key]: value }
@@ -179,6 +198,23 @@ export function SettingsPage() {
       await window.api.saveTraySettings({ [key]: value })
     } catch (error) {
       console.error('Failed to save tray settings:', error)
+    }
+  }
+
+  // 切换开机自启动
+  const handleAutoLaunchChange = async () => {
+    const newValue = !autoLaunchEnabled
+    setAutoLaunchEnabled(newValue)
+    try {
+      const result = await window.api.setAutoLaunch(newValue)
+      if (!result.success) {
+        // 如果设置失败，恢复原状态
+        setAutoLaunchEnabled(!newValue)
+        console.error('Failed to set auto launch:', result.error)
+      }
+    } catch (error) {
+      setAutoLaunchEnabled(!newValue)
+      console.error('Failed to set auto launch:', error)
     }
   }
 
@@ -708,6 +744,26 @@ export function SettingsPage() {
                   </div>
                 </>
               )}
+
+              {/* 开机自启动 */}
+              <div className="flex items-center justify-between pt-2 border-t">
+                <div>
+                  <p className="font-medium">{isEn ? 'Launch at Startup' : '开机自启动'}</p>
+                  <p className="text-sm text-muted-foreground">{isEn ? 'Automatically start when system boots' : '系统启动时自动运行程序'}</p>
+                </div>
+                <Button
+                  variant={autoLaunchEnabled ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={handleAutoLaunchChange}
+                  disabled={autoLaunchLoading}
+                >
+                  {autoLaunchLoading
+                    ? (isEn ? 'Loading...' : '加载中...')
+                    : autoLaunchEnabled
+                      ? (isEn ? 'On' : '已开启')
+                      : (isEn ? 'Off' : '已关闭')}
+                </Button>
+              </div>
 
               <div className="text-xs text-muted-foreground bg-muted/50 rounded-lg p-3 space-y-1">
                 <p>• {isEn ? 'Double-click tray icon to show window' : '双击托盘图标可以显示主窗口'}</p>
