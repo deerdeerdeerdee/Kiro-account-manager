@@ -492,7 +492,9 @@ export class ProxyServer {
             currentAccount = this.accountPool.getAccount(currentAccount.id) || currentAccount
             continue
           }
-          // 刷新失败，只在启用多账号时切换账号
+          // 刷新失败，记录认证错误（会设置自动恢复时间）
+          this.accountPool.recordError(currentAccount.id, 'auth')
+          // 只在启用多账号时切换账号
           if (this.config.enableMultiAccount) {
             const nextAccount = this.accountPool.getNextAccount()
             if (nextAccount && nextAccount.id !== currentAccount.id) {
@@ -505,7 +507,7 @@ export class ProxyServer {
         // 402/429: 额度耗尽，切换端点或账号
         if (errMsg.includes('402') || errMsg.includes('429') || errMsg.includes('quota') || errMsg.includes('ThrottlingException') || errMsg.includes('reached the limit')) {
           console.log('[ProxyServer] Quota/throttle error, switching endpoint or account')
-          this.accountPool.recordError(currentAccount.id, true)
+          this.accountPool.recordError(currentAccount.id, 'quota')
           endpointIndex = (endpointIndex + 1) % 2 // 切换端点
           if (endpointIndex === 0) {
             // 已尝试所有端点，检查是否需要切换账号
@@ -530,14 +532,24 @@ export class ProxyServer {
           continue
         }
 
-        // 5xx: 重试
+        // 网络错误：短暂冷却后重试
+        if (errMsg.includes('ECONNREFUSED') || errMsg.includes('ETIMEDOUT') || errMsg.includes('ENOTFOUND') || errMsg.includes('network') || errMsg.includes('socket')) {
+          console.log('[ProxyServer] Network error, short cooldown and retry')
+          this.accountPool.recordError(currentAccount.id, 'network')
+          await new Promise(resolve => setTimeout(resolve, retryDelay))
+          continue
+        }
+
+        // 5xx: 服务器错误，重试
         if (errMsg.includes('500') || errMsg.includes('502') || errMsg.includes('503') || errMsg.includes('504')) {
           console.log('[ProxyServer] Server error, retrying')
+          this.accountPool.recordError(currentAccount.id, 'server')
           await new Promise(resolve => setTimeout(resolve, retryDelay * (attempt + 1)))
           continue
         }
 
-        // 其他错误，不重试
+        // 其他错误，记录并不重试
+        this.accountPool.recordError(currentAccount.id, 'unknown')
         break
       }
     }

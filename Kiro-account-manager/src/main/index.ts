@@ -4173,18 +4173,26 @@ app.whenReady().then(async () => {
       // 添加或更新账号
       for (const account of accounts) {
         if (existingAccountIds.has(account.id)) {
-          // 更新现有账号（保留运行时状态如 errorCount, cooldownUntil 等）
+          // 更新现有账号
           const existing = pool.getAccount(account.id)
           if (existing) {
+            // 智能状态处理：如果前端传来的 Token 比账号池中的新，重置运行时状态
+            const shouldResetState = (account.expiresAt || 0) > (existing.expiresAt || 0)
+
             pool.updateAccount(account.id, {
               ...account,
-              // 保留运行时状态
-              errorCount: existing.errorCount,
-              cooldownUntil: existing.cooldownUntil,
-              isAvailable: existing.isAvailable,
+              // 根据 Token 是否更新来决定是否重置运行时状态
+              errorCount: shouldResetState ? 0 : existing.errorCount,
+              cooldownUntil: shouldResetState ? undefined : existing.cooldownUntil,
+              isAvailable: shouldResetState ? true : existing.isAvailable,
+              autoRecoverAt: shouldResetState ? undefined : existing.autoRecoverAt,
               requestCount: existing.requestCount,
               lastUsed: existing.lastUsed
             })
+
+            if (shouldResetState) {
+              console.log(`[ProxyServer] Account ${account.email || account.id} token updated, reset runtime state`)
+            }
           }
         } else {
           // 添加新账号

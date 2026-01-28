@@ -239,6 +239,7 @@ export interface ProxyAccount {
   errorCount?: number
   isAvailable?: boolean
   cooldownUntil?: number
+  autoRecoverAt?: number // 自动恢复时间（用于 Token 刷新失败后的自动恢复）
 }
 
 export interface ProxyConfig {
