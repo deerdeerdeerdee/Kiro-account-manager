@@ -271,6 +271,19 @@ npx electron-builder --linux --arm64
 
 ## 📋 更新日志
 
+### v1.4.6 (2025-01-29)
+- 🔑 **多 API Key 管理**: 支持创建多个 API Key，可选格式（sk-xxx / PROXY_KEY / KEY:TOKEN）
+- 💰 **Credits 额度限制**: 为每个 API Key 设置独立的 Credits 使用额度上限
+- 📊 **API Key 用量统计**: 记录每个 API Key 的请求数、Credits、Tokens 使用情况
+- 🚫 **超额自动拒绝**: 超出 Credits 额度后返回 429 错误，阻止继续调用
+- 🧠 **模型思考模式**: 为每个模型单独配置是否默认启用扩展思考模式 (Extended Thinking)
+- ⏰ **时间精确显示**: API Key 创建时间和最后使用时间精确到秒
+- 🔧 **K-Proxy 集成**: 新增 K-Proxy 代理服务支持，实现设备指纹管理和请求代理
+- 🆔 **设备 ID 管理**: 支持账户绑定设备 ID，可导入/导出设备 ID 映射
+- 🔄 **API 类型切换**: 支持 REST API (GetUsageLimits) 和 CBOR API (GetUsage) 双模式切换
+- 🌐 **代理请求支持**: Kiro API 请求支持通过 K-Proxy 代理发送，使用 undici 库
+- 📊 **用量查询增强**: 统一用量查询接口，自动适配不同 API 类型
+
 ### v1.4.5 (2025-01-21)
 - 🐛 **企业账号判重修复**: 修复企业认证账号（无邮箱）被误判为重复的问题，改用 userId 判断
 - 🎨 **订阅标签颜色**: 详情页订阅标签颜色现在与卡片一致（PRO+ 紫色、POWER 金色、PRO 蓝色）

@@ -7,6 +7,8 @@ import { ProxyLogsDialog } from './ProxyLogsDialog'
 import { ProxyDetailedLogsDialog } from './ProxyDetailedLogsDialog'
 import { ModelsDialog } from './ModelsDialog'
 import { AccountSelectDialog } from './AccountSelectDialog'
+import { ApiKeyManager } from './ApiKeyManager'
+import { createPortal } from 'react-dom'
 
 interface ProxyStats {
   totalRequests: number
@@ -68,6 +70,7 @@ export function ProxyPanel() {
   const [showDetailedLogsDialog, setShowDetailedLogsDialog] = useState(false)
   const [showModelsDialog, setShowModelsDialog] = useState(false)
   const [showAccountSelectDialog, setShowAccountSelectDialog] = useState(false)
+  const [showApiKeyManager, setShowApiKeyManager] = useState(false)
   const [showApiKey, setShowApiKey] = useState(false)
   const [apiKeyFormat, setApiKeyFormat] = useState<'sk' | 'simple' | 'token'>('sk')
   const [apiKeyCopied, setApiKeyCopied] = useState(false)
@@ -540,6 +543,15 @@ export function ProxyPanel() {
                   {apiKeyCopied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
                 </Button>
               )}
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={() => setShowApiKeyManager(true)}
+                title={isEn ? 'Manage Multiple API Keys' : '管理多个 API Key'}
+                className="text-xs w-auto px-2"
+              >
+                {isEn ? 'Manage' : '管理'}
+              </Button>
             </div>
             <p className="text-xs text-muted-foreground">{isEn ? 'When set, requests must provide this key in Authorization or X-Api-Key header' : '设置后，请求需要在 Authorization 或 X-Api-Key 头中提供此密钥'}</p>
           </div>
@@ -686,6 +698,26 @@ export function ProxyPanel() {
                     disabled={isRunning}
                   />
                 </div>
+              </div>
+              <div className="space-y-2">
+                <Label>{isEn ? 'Model Thinking Mode' : '模型思考模式'}</Label>
+                <div className="grid grid-cols-4 gap-2 px-3 py-2 rounded-md border border-input bg-transparent">
+                  {['claude-sonnet-4', 'claude-sonnet-4.5', 'claude-opus-4.5', 'claude-haiku-4.5'].map(model => (
+                    <div key={model} className="flex items-center gap-1.5">
+                      <Switch
+                        checked={(config as any).modelThinkingMode?.[model] || false}
+                        onCheckedChange={(checked) => {
+                          const newMode = { ...(config as any).modelThinkingMode, [model]: checked }
+                          setConfig(prev => ({ ...prev, modelThinkingMode: newMode } as any))
+                          window.api.proxyUpdateConfig({ modelThinkingMode: newMode } as any)
+                        }}
+                        disabled={isRunning}
+                      />
+                      <span className="text-xs truncate">{model.replace('claude-', '')}</span>
+                    </div>
+                  ))}
+                </div>
+                <p className="text-xs text-muted-foreground">{isEn ? 'Auto-enable Extended Thinking for selected models' : '为选中的模型自动启用扩展思考模式'}</p>
               </div>
             </div>
           </div>
@@ -977,6 +1009,21 @@ export function ProxyPanel() {
         }}
         isEn={isEn}
       />
+
+      {/* API Key 管理弹窗 */}
+      {showApiKeyManager && createPortal(
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setShowApiKeyManager(false)} />
+          <div className="relative bg-background rounded-lg shadow-lg w-[600px] max-h-[80vh] overflow-y-auto p-4">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold">{isEn ? 'API Key Management' : 'API Key 管理'}</h2>
+              <Button variant="ghost" size="icon" onClick={() => setShowApiKeyManager(false)}>✕</Button>
+            </div>
+            <ApiKeyManager />
+          </div>
+        </div>,
+        document.body
+      )}
     </div>
   )
 }

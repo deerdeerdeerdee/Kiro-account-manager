@@ -1,11 +1,11 @@
-import { Home, Users, Settings, Info, ChevronLeft, ChevronRight, Fingerprint, Sparkles, Server } from 'lucide-react'
+import { Home, Users, Settings, Info, ChevronLeft, ChevronRight, Fingerprint, Sparkles, Server, Shield } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import kiroLogo from '@/assets/kiro-high-resolution-logo-transparent.png'
 import kiroLogoSmall from '@/assets/Kiro Logo.svg'
 import { useAccountsStore } from '@/store/accounts'
 import { useTranslation } from '@/hooks/useTranslation'
 
-export type PageType = 'home' | 'accounts' | 'machineId' | 'kiroSettings' | 'proxy' | 'settings' | 'about'
+export type PageType = 'home' | 'accounts' | 'machineId' | 'kiroSettings' | 'proxy' | 'kproxy' | 'settings' | 'about'
 
 interface SidebarProps {
   currentPage: PageType
@@ -20,6 +20,7 @@ const menuItemsConfig: { id: PageType; labelKey: string; icon: React.ElementType
   { id: 'machineId', labelKey: 'nav.machineId', icon: Fingerprint },
   { id: 'kiroSettings', labelKey: 'nav.kiroSettings', icon: Sparkles },
   { id: 'proxy', labelKey: 'nav.proxy', icon: Server },
+  { id: 'kproxy', labelKey: 'nav.kproxy', icon: Shield },
   { id: 'settings', labelKey: 'nav.settings', icon: Settings },
   { id: 'about', labelKey: 'nav.about', icon: Info },
 ]

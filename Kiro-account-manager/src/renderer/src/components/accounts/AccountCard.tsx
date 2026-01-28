@@ -273,9 +273,12 @@ export const AccountCard = memo(function AccountCard({
 
   const isHighUsage = account.usage.percentUsed > 80
 
-  // UnauthorizedException 和 AccountSuspendedException 都表示账号被封禁/暂停
+  // 检测账号是否被封禁/暂停（多种错误格式）
   const isUnauthorized = account.lastError?.includes('UnauthorizedException') || 
-                         account.lastError?.includes('AccountSuspendedException')
+                         account.lastError?.includes('AccountSuspendedException') ||
+                         account.lastError?.includes('账户已封禁') ||
+                         account.lastError?.includes('HTTP 403') ||
+                         account.lastError?.includes('HTTP 423')
   
   // 封禁详情弹窗状态
   const [showBanDialog, setShowBanDialog] = useState(false)
@@ -567,6 +570,14 @@ export const AccountCard = memo(function AccountCard({
                <div className="w-1.5 h-1.5 rounded-full bg-blue-500 flex-shrink-0" />
                <span className="text-muted-foreground">{isEn ? 'Base:' : '基础:'}</span>
                <span className="font-medium">{formatUsage(account.usage.baseCurrent ?? 0)}/{formatUsage(account.usage.baseLimit)}</span>
+               {account.usage.nextResetDate && (
+                 <span className="text-muted-foreground/70 ml-auto">
+                   {isEn ? 'to' : '至'} {(() => {
+                      const d = account.usage.nextResetDate as unknown
+                      try { return (typeof d === 'string' ? d : new Date(d as Date).toISOString()).split('T')[0] } catch { return '' }
+                   })()}
+                 </span>
+               )}
              </div>
            )}
            {/* 试用额度 */}

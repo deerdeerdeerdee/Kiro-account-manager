@@ -129,6 +129,8 @@ interface KiroApi {
     id: string
     email: string
     idp?: string
+    needsTokenRefresh?: boolean
+    machineId?: string  // 账户绑定的设备 ID
     credentials: {
       refreshToken: string
       clientId?: string
@@ -596,6 +598,102 @@ interface KiroApi {
 
   // 监听反代状态变化事件
   onProxyStatusChange: (callback: (status: { running: boolean; port: number }) => void) => () => void
+
+  // ============ Usage API 类型设置 ============
+
+  // 获取 Usage API 类型
+  getUsageApiType: () => Promise<'rest' | 'cbor'>
+
+  // 设置 Usage API 类型
+  setUsageApiType: (type: 'rest' | 'cbor') => Promise<{ success: boolean; type: string }>
+
+  // 获取是否使用 K-Proxy 代理
+  getUseKProxyForApi: () => Promise<boolean>
+
+  // 设置是否使用 K-Proxy 代理
+  setUseKProxyForApi: (enabled: boolean) => Promise<{ success: boolean; enabled: boolean }>
+
+  // ============ K-Proxy MITM 代理 ============
+
+  // 初始化 K-Proxy
+  kproxyInit: () => Promise<{ success: boolean; caInfo?: { certPath: string; fingerprint: string; validFrom: string; validTo: string }; error?: string }>
+
+  // 启动 K-Proxy
+  kproxyStart: (config?: { port?: number; host?: string; mitmDomains?: string[]; deviceId?: string }) => Promise<{ success: boolean; port?: number; error?: string }>
+
+  // 停止 K-Proxy
+  kproxyStop: () => Promise<{ success: boolean; error?: string }>
+
+  // 获取 K-Proxy 状态
+  kproxyGetStatus: () => Promise<{ running: boolean; config: unknown; stats: unknown; caInfo: unknown }>
+
+  // 更新 K-Proxy 配置
+  kproxyUpdateConfig: (config: { port?: number; host?: string; mitmDomains?: string[]; deviceId?: string; autoStart?: boolean; logRequests?: boolean }) => Promise<{ success: boolean; config?: unknown; error?: string }>
+
+  // 设置当前设备 ID
+  kproxySetDeviceId: (deviceId: string) => Promise<{ success: boolean; error?: string }>
+
+  // 生成新的设备 ID
+  kproxyGenerateDeviceId: () => Promise<{ success: boolean; deviceId?: string }>
+
+  // 添加设备 ID 映射
+  kproxyAddDeviceMapping: (mapping: { accountId: string; deviceId: string; description?: string; createdAt: number }) => Promise<{ success: boolean; error?: string }>
+
+  // 获取所有设备 ID 映射
+  kproxyGetDeviceMappings: () => Promise<{ success: boolean; mappings: Array<{ accountId: string; deviceId: string; description?: string; createdAt: number; lastUsed?: number }> }>
+
+  // 切换到账号设备 ID
+  kproxySwitchToAccount: (accountId: string) => Promise<{ success: boolean; error?: string }>
+
+  // 获取 CA 证书
+  kproxyGetCaCert: () => Promise<{ success: boolean; certPem?: string; certPath?: string; fingerprint?: string; error?: string }>
+
+  // 导出 CA 证书
+  kproxyExportCaCert: (exportPath?: string) => Promise<{ success: boolean; path?: string; error?: string }>
+
+  // 检查 CA 证书是否已安装
+  kproxyCheckCaCertInstalled: () => Promise<{ success: boolean; installed: boolean; error?: string }>
+
+  // ============ API Key 管理 ============
+  
+  // 获取所有 API Keys
+  proxyGetApiKeys: () => Promise<{ success: boolean; apiKeys: Array<{ id: string; name: string; key: string; enabled: boolean; createdAt: number; lastUsedAt?: number; usage: { totalRequests: number; totalCredits: number; totalInputTokens: number; totalOutputTokens: number; daily: Record<string, { requests: number; credits: number; inputTokens: number; outputTokens: number }> } }>; error?: string }>
+
+  // 添加 API Key
+  proxyAddApiKey: (apiKey: { name: string; key?: string; format?: 'sk' | 'simple' | 'token'; creditsLimit?: number }) => Promise<{ success: boolean; apiKey?: { id: string; name: string; key: string; format?: 'sk' | 'simple' | 'token'; enabled: boolean; createdAt: number; creditsLimit?: number; usage: { totalRequests: number; totalCredits: number; totalInputTokens: number; totalOutputTokens: number; daily: Record<string, { requests: number; credits: number; inputTokens: number; outputTokens: number }> } }; error?: string }>
+
+  // 更新 API Key
+  proxyUpdateApiKey: (id: string, updates: { name?: string; key?: string; enabled?: boolean; creditsLimit?: number | null }) => Promise<{ success: boolean; apiKey?: { id: string; name: string; key: string; format?: 'sk' | 'simple' | 'token'; enabled: boolean; createdAt: number; creditsLimit?: number; usage: { totalRequests: number; totalCredits: number; totalInputTokens: number; totalOutputTokens: number; daily: Record<string, { requests: number; credits: number; inputTokens: number; outputTokens: number }> } }; error?: string }>
+
+  // 删除 API Key
+  proxyDeleteApiKey: (id: string) => Promise<{ success: boolean; error?: string }>
+
+  // 重置 API Key 用量统计
+  proxyResetApiKeyUsage: (id: string) => Promise<{ success: boolean; error?: string }>
+
+  // 安装 CA 证书到系统信任存储
+  kproxyInstallCaCert: () => Promise<{ success: boolean; message?: string; error?: string }>
+
+  // 卸载 CA 证书从系统信任存储
+  kproxyUninstallCaCert: () => Promise<{ success: boolean; message?: string; error?: string }>
+
+  // 重置 K-Proxy 统计
+  kproxyResetStats: () => Promise<{ success: boolean }>
+
+  // 监听 K-Proxy 请求事件
+  onKproxyRequest: (callback: (info: { timestamp: number; method: string; host: string; path: string; isMitm: boolean; deviceIdReplaced: boolean }) => void) => () => void
+
+  // 监听 K-Proxy 响应事件
+  onKproxyResponse: (callback: (info: { timestamp: number; host: string; statusCode: number; duration: number }) => void) => () => void
+
+  // 监听 K-Proxy 错误事件
+  onKproxyError: (callback: (error: string) => void) => () => void
+
+  // 监听 K-Proxy 状态变化事件
+  onKproxyStatusChange: (callback: (status: { running: boolean; port: number }) => void) => () => void
+
+  // 监听 K-Proxy MITM 拦截事件
+  onKproxyMitm: (callback: (info: { host: string; modified: boolean }) => void) => () => void
 
   // ============ 托盘相关 API ============
 

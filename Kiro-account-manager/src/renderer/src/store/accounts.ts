@@ -20,6 +20,15 @@ import type {
 // 账号管理 Store
 // ============================================
 
+// 生成随机 64 位十六进制设备 ID
+function generateRandomMachineId(): string {
+  const bytes = new Uint8Array(32)
+  crypto.getRandomValues(bytes)
+  return Array.from(bytes)
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('')
+}
+
 // 自动 Token 刷新定时器
 let tokenRefreshTimer: ReturnType<typeof setInterval> | null = null
 const TOKEN_REFRESH_BEFORE_EXPIRY = 5 * 60 * 1000 // 过期前 5 分钟刷新
@@ -288,9 +297,13 @@ export const useAccountsStore = create<AccountsStore>()((set, get) => ({
     const id = uuidv4()
     const now = Date.now()
 
+    // 如果没有提供 machineId，自动生成一个随机的 64 位十六进制设备 ID
+    const machineId = accountData.machineId || generateRandomMachineId()
+
     const account: Account = {
       ...accountData,
       id,
+      machineId,
       createdAt: now,
       lastUsedAt: now,
       isActive: false,
@@ -1122,7 +1135,14 @@ export const useAccountsStore = create<AccountsStore>()((set, get) => ({
           console.log(`[Account] Token refreshed for ${account?.email}`)
         }
       } else {
-        updateAccountStatus(id, 'error', result.error?.message)
+        // 检查是否是封禁错误
+        const isBanned = (result.error as { isBanned?: boolean })?.isBanned
+        if (isBanned) {
+          // 封禁账户：设置错误状态并标记为封禁
+          updateAccountStatus(id, 'error', `账户已封禁: ${result.error?.message}`)
+        } else {
+          updateAccountStatus(id, 'error', result.error?.message)
+        }
       }
     } catch (error) {
       updateAccountStatus(id, 'error', error instanceof Error ? error.message : 'Unknown error')
@@ -1255,6 +1275,17 @@ export const useAccountsStore = create<AccountsStore>()((set, get) => ({
       if (data) {
         const accounts = new Map(Object.entries(data.accounts ?? {}) as [string, Account][])
         let activeAccountId = data.activeAccountId ?? null
+
+        // 为没有 machineId 的现有账户生成一个
+        let needsSave = false
+        for (const [id, account] of accounts) {
+          if (!account.machineId) {
+            account.machineId = generateRandomMachineId()
+            accounts.set(id, account)
+            needsSave = true
+            console.log(`[Store] Generated machineId for account ${account.email}: ${account.machineId.substring(0, 16)}...`)
+          }
+        }
 
         // 同步本地 SSO 缓存中的账号状态
         try {
@@ -1402,6 +1433,12 @@ export const useAccountsStore = create<AccountsStore>()((set, get) => ({
 
         // 启动定时自动保存（防止数据丢失）
         get().startAutoSave()
+
+        // 如果生成了新的 machineId，保存到存储
+        if (needsSave) {
+          console.log('[Store] Saving accounts with newly generated machineIds')
+          get().saveToStorage()
+        }
       }
     } catch (error) {
       console.error('Failed to load accounts:', error)
@@ -1880,6 +1917,7 @@ export const useAccountsStore = create<AccountsStore>()((set, get) => ({
       email: string
       idp?: string
       needsTokenRefresh: boolean
+      machineId?: string  // 账户绑定的设备 ID
       credentials: {
         refreshToken: string
         clientId?: string
@@ -1909,6 +1947,7 @@ export const useAccountsStore = create<AccountsStore>()((set, get) => ({
           email: account.email,
           idp: account.idp,
           needsTokenRefresh: !!needsTokenRefresh,
+          machineId: account.machineId,  // 传递账户绑定的设备 ID
           credentials: {
             refreshToken: account.credentials.refreshToken || '',
             clientId: account.credentials.clientId,

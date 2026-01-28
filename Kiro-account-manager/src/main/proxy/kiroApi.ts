@@ -1,5 +1,6 @@
 // Kiro API 调用核心模块
 import { v4 as uuidv4 } from 'uuid'
+import { ProxyAgent, fetch as undiciFetch, type RequestInit as UndiciRequestInit } from 'undici'
 import type {
   KiroPayload,
   KiroUserInputMessage,
@@ -11,6 +12,42 @@ import type {
   ProxyAccount
 } from './types'
 import { proxyLogger } from './logger'
+import { getKProxyService } from '../kproxy'
+
+// 是否使用 K-Proxy 代理发送 API 请求（从主进程导入）
+let useKProxyForApi = false
+
+export function setUseKProxyForApiInProxy(enabled: boolean): void {
+  useKProxyForApi = enabled
+}
+
+// 获取 K-Proxy 代理 agent
+function getKProxyAgent(): ProxyAgent | undefined {
+  if (!useKProxyForApi) return undefined
+  const kproxyService = getKProxyService()
+  if (!kproxyService || !kproxyService.isRunning()) return undefined
+  const config = kproxyService.getConfig()
+  const proxyUrl = `http://${config.host}:${config.port}`
+  return new ProxyAgent({
+    uri: proxyUrl,
+    requestTls: {
+      rejectUnauthorized: false
+    }
+  })
+}
+
+// 使用代理的 fetch 函数
+async function fetchWithProxy(url: string, options: RequestInit): Promise<Response> {
+  const agent = getKProxyAgent()
+  if (agent) {
+    console.log('[KiroAPI] Using K-Proxy agent')
+    return await undiciFetch(url, {
+      ...options,
+      dispatcher: agent
+    } as UndiciRequestInit) as unknown as Response
+  }
+  return await fetch(url, options)
+}
 
 // Kiro API 端点配置
 const KIRO_ENDPOINTS = [
@@ -28,9 +65,19 @@ const KIRO_ENDPOINTS = [
   }
 ]
 
-// User-Agent 配置 - Social 认证方式
-const KIRO_USER_AGENT = 'aws-sdk-js/1.0.18 ua/2.1 os/windows lang/js md/nodejs#20.16.0 api/codewhispererstreaming#1.0.18 m/E KiroIDE-0.6.18'
-const KIRO_AMZ_USER_AGENT = 'aws-sdk-js/1.0.18 KiroIDE-0.6.18'
+// Kiro 版本
+const KIRO_VERSION = '0.6.18'
+
+// User-Agent 生成函数 - Social 认证方式
+function getKiroUserAgent(machineId?: string): string {
+  const suffix = machineId ? `KiroIDE-${KIRO_VERSION}-${machineId}` : `KiroIDE-${KIRO_VERSION}`
+  return `aws-sdk-js/1.0.18 ua/2.1 os/windows lang/js md/nodejs#20.16.0 api/codewhispererstreaming#1.0.18 m/E ${suffix}`
+}
+
+function getKiroAmzUserAgent(machineId?: string): string {
+  const suffix = machineId ? `KiroIDE ${KIRO_VERSION} ${machineId}` : `KiroIDE-${KIRO_VERSION}`
+  return `aws-sdk-js/1.0.18 ${suffix}`
+}
 
 // User-Agent 配置 - IDC 认证方式 (Amazon Q CLI 样式)
 const KIRO_CLI_USER_AGENT = 'aws-sdk-rust/1.3.9 os/macos lang/rust/1.87.0'
@@ -416,16 +463,27 @@ export function buildKiroPayload(
   return payload
 }
 
+// 获取账号绑定的 Machine ID（从账户对象或 K-Proxy 映射）
+function getAccountMachineId(accountId: string, accountMachineId?: string): string | undefined {
+  // 优先使用账户对象中的 machineId
+  if (accountMachineId) return accountMachineId
+  // 否则从 K-Proxy 映射获取
+  const kproxyService = getKProxyService()
+  if (!kproxyService) return undefined
+  return kproxyService.getDeviceIdForAccount(accountId)
+}
+
 // 获取认证方式对应的请求头
 function getAuthHeaders(account: ProxyAccount, endpoint: typeof KIRO_ENDPOINTS[0]): Record<string, string> {
   const isIDC = account.authMethod === 'idc'
+  const machineId = getAccountMachineId(account.id, account.machineId)
   
   return {
     'Content-Type': 'application/json',
     'Accept': '*/*',
     'X-Amz-Target': endpoint.amzTarget,
-    'User-Agent': isIDC ? KIRO_CLI_USER_AGENT : KIRO_USER_AGENT,
-    'X-Amz-User-Agent': isIDC ? KIRO_CLI_AMZ_USER_AGENT : KIRO_AMZ_USER_AGENT,
+    'User-Agent': isIDC ? KIRO_CLI_USER_AGENT : getKiroUserAgent(machineId),
+    'X-Amz-User-Agent': isIDC ? KIRO_CLI_AMZ_USER_AGENT : getKiroAmzUserAgent(machineId),
     'x-amzn-kiro-agent-mode': isIDC ? AGENT_MODE_VIBE : AGENT_MODE_SPEC,
     'x-amzn-codewhisperer-optout': 'true',
     'Amz-Sdk-Request': 'attempt=1; max=3',
@@ -478,6 +536,7 @@ export async function callKiroApiStream(
       console.log(`[KiroAPI]   - Payload size: ${payloadStr.length} bytes`)
       
       const headers = getAuthHeaders(account, endpoint)
+      // 流式请求直接发送，不走 K-Proxy（因为已内置 Machine ID 替换）
       const response = await fetch(endpoint.url, {
         method: 'POST',
         headers,
@@ -1056,18 +1115,19 @@ export interface KiroModel {
 // 获取 Kiro 官方模型列表
 export async function fetchKiroModels(account: ProxyAccount): Promise<KiroModel[]> {
   const url = 'https://codewhisperer.us-east-1.amazonaws.com/ListAvailableModels?origin=AI_EDITOR&maxResults=50'
+  const machineId = getAccountMachineId(account.id, account.machineId)
   
   const headers: Record<string, string> = {
     'Authorization': `Bearer ${account.accessToken}`,
     'Content-Type': 'application/json',
     'Accept': 'application/json',
-    'User-Agent': KIRO_USER_AGENT,
-    'x-amz-user-agent': KIRO_AMZ_USER_AGENT,
+    'User-Agent': getKiroUserAgent(machineId),
+    'x-amz-user-agent': getKiroAmzUserAgent(machineId),
     'x-amzn-codewhisperer-optout': 'true'
   }
 
   try {
-    const response = await fetch(url, { method: 'GET', headers })
+    const response = await fetchWithProxy(url, { method: 'GET', headers })
     
     if (!response.ok) {
       console.error('[KiroAPI] ListAvailableModels failed:', response.status)
@@ -1107,18 +1167,19 @@ export interface SubscriptionListResponse {
 // 获取可用订阅列表
 export async function fetchAvailableSubscriptions(account: ProxyAccount): Promise<SubscriptionListResponse> {
   const url = 'https://codewhisperer.us-east-1.amazonaws.com/listAvailableSubscriptions'
+  const machineId = getAccountMachineId(account.id, account.machineId)
   
   const headers: Record<string, string> = {
     'Authorization': `Bearer ${account.accessToken}`,
     'Content-Type': 'application/json',
     'Accept': 'application/json',
-    'User-Agent': KIRO_USER_AGENT,
-    'x-amz-user-agent': KIRO_AMZ_USER_AGENT,
+    'User-Agent': getKiroUserAgent(machineId),
+    'x-amz-user-agent': getKiroAmzUserAgent(machineId),
     'x-amzn-codewhisperer-optout-preference': 'OPTIN'
   }
 
   try {
-    const response = await fetch(url, { method: 'POST', headers, body: '{}' })
+    const response = await fetchWithProxy(url, { method: 'POST', headers, body: '{}' })
     
     if (!response.ok) {
       console.error('[KiroAPI] ListAvailableSubscriptions failed:', response.status)
@@ -1147,13 +1208,14 @@ export async function fetchSubscriptionToken(
   subscriptionType?: string
 ): Promise<SubscriptionTokenResponse> {
   const url = 'https://codewhisperer.us-east-1.amazonaws.com/CreateSubscriptionToken'
+  const machineId = getAccountMachineId(account.id, account.machineId)
   
   const headers: Record<string, string> = {
     'Authorization': `Bearer ${account.accessToken}`,
     'Content-Type': 'application/json',
     'Accept': 'application/json',
-    'User-Agent': KIRO_USER_AGENT,
-    'x-amz-user-agent': KIRO_AMZ_USER_AGENT,
+    'User-Agent': getKiroUserAgent(machineId),
+    'x-amz-user-agent': getKiroAmzUserAgent(machineId),
     'x-amzn-codewhisperer-optout-preference': 'OPTIN'
   }
 
@@ -1167,7 +1229,7 @@ export async function fetchSubscriptionToken(
   }
 
   try {
-    const response = await fetch(url, { method: 'POST', headers, body: JSON.stringify(payload) })
+    const response = await fetchWithProxy(url, { method: 'POST', headers, body: JSON.stringify(payload) })
     
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}))

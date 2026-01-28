@@ -156,6 +156,64 @@ export function SettingsPage() {
   })
   const [trayLoading, setTrayLoading] = useState(true)
 
+  // Usage API 类型状态
+  const [usageApiType, setUsageApiType] = useState<'rest' | 'cbor'>('rest')
+  const [usageApiLoading, setUsageApiLoading] = useState(true)
+
+  // 加载 Usage API 类型设置
+  useEffect(() => {
+    const loadUsageApiType = async () => {
+      try {
+        const type = await window.api.getUsageApiType()
+        setUsageApiType(type)
+      } catch (error) {
+        console.error('Failed to load usage API type:', error)
+      } finally {
+        setUsageApiLoading(false)
+      }
+    }
+    loadUsageApiType()
+  }, [])
+
+  // 保存 Usage API 类型
+  const handleUsageApiTypeChange = async (type: 'rest' | 'cbor') => {
+    setUsageApiType(type)
+    try {
+      await window.api.setUsageApiType(type)
+    } catch (error) {
+      console.error('Failed to save usage API type:', error)
+    }
+  }
+
+  // K-Proxy 代理设置状态
+  const [useKProxyForApi, setUseKProxyForApi] = useState(false)
+  const [kproxyLoading, setKproxyLoading] = useState(true)
+
+  // 加载 K-Proxy 代理设置
+  useEffect(() => {
+    const loadKProxySettings = async () => {
+      try {
+        const enabled = await window.api.getUseKProxyForApi()
+        setUseKProxyForApi(enabled)
+      } catch (error) {
+        console.error('Failed to load K-Proxy settings:', error)
+      } finally {
+        setKproxyLoading(false)
+      }
+    }
+    loadKProxySettings()
+  }, [])
+
+  // 保存 K-Proxy 代理设置
+  const handleKProxyChange = async (enabled: boolean) => {
+    setUseKProxyForApi(enabled)
+    try {
+      await window.api.setUseKProxyForApi(enabled)
+    } catch (error) {
+      console.error('Failed to save K-Proxy settings:', error)
+    }
+  }
+
   // 加载托盘设置
   useEffect(() => {
     const loadTraySettings = async () => {
@@ -507,6 +565,58 @@ export function SettingsPage() {
                 </Button>
               </div>
             </>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* API 类型设置 */}
+      <Card className="border-0 shadow-sm hover:shadow-md transition-shadow duration-200">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base flex items-center gap-3">
+            <div className="p-2 rounded-lg bg-primary/10">
+              <Database className="h-4 w-4 text-primary" />
+            </div>
+            {isEn ? 'API Settings' : 'API 设置'}
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="font-medium">{isEn ? 'Usage API Type' : '用量查询 API'}</p>
+              <p className="text-sm text-muted-foreground">{isEn ? 'Select API type for querying usage limits' : '选择查询账户用量的 API 类型'}</p>
+            </div>
+            <select
+              className="w-[180px] h-9 px-3 rounded-lg border bg-background text-sm focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary"
+              value={usageApiType}
+              onChange={(e) => handleUsageApiTypeChange(e.target.value as 'rest' | 'cbor')}
+              disabled={usageApiLoading}
+            >
+              <option value="rest">REST (GetUsageLimits)</option>
+              <option value="cbor">CBOR (GetUserUsageAndLimits)</option>
+            </select>
+          </div>
+          <div className="text-xs text-muted-foreground bg-muted/50 rounded-lg p-3 space-y-1">
+            <p>• <strong>REST</strong>: {isEn ? 'Official Kiro IDE format, recommended' : '官方 Kiro IDE 使用的格式，推荐使用'}</p>
+            <p>• <strong>CBOR</strong>: {isEn ? 'Web portal format, may have different fields' : '网页端格式，字段可能有差异'}</p>
+          </div>
+          <div className="flex items-center justify-between pt-2 border-t">
+            <div>
+              <p className="font-medium">{isEn ? 'Use K-Proxy for API' : 'API 请求走 K-Proxy'}</p>
+              <p className="text-sm text-muted-foreground">{isEn ? 'Route API requests through K-Proxy MITM proxy' : 'API 请求通过 K-Proxy MITM 代理发送'}</p>
+            </div>
+            <Button
+              variant={useKProxyForApi ? "default" : "outline"}
+              size="sm"
+              onClick={() => handleKProxyChange(!useKProxyForApi)}
+              disabled={kproxyLoading}
+            >
+              {useKProxyForApi ? (isEn ? 'On' : '已开启') : (isEn ? 'Off' : '已关闭')}
+            </Button>
+          </div>
+          {useKProxyForApi && (
+            <div className="text-xs text-amber-500 bg-amber-500/10 rounded-lg p-3">
+              {isEn ? '⚠️ K-Proxy must be running for this to work' : '⚠️ 需要先启动 K-Proxy MITM 代理才能生效'}
+            </div>
           )}
         </CardContent>
       </Card>

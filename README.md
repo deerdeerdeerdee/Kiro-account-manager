@@ -271,6 +271,19 @@ The project is configured with GitHub Actions workflow for auto building all pla
 
 ## 📋 Changelog
 
+### v1.4.6 (2025-01-29)
+- 🔑 **Multi API Key Management**: Support creating multiple API Keys with selectable formats (sk-xxx / PROXY_KEY / KEY:TOKEN)
+- 💰 **Credits Limit**: Set independent Credits usage limit for each API Key
+- 📊 **API Key Usage Stats**: Track requests, Credits, and Tokens usage for each API Key
+- 🚫 **Auto-Reject on Quota Exceeded**: Returns 429 error when Credits limit exceeded
+- 🧠 **Model Thinking Mode**: Configure Extended Thinking mode default setting for each model
+- ⏰ **Precise Timestamps**: API Key creation time and last used time shown with seconds
+- 🔧 **K-Proxy Integration**: Added K-Proxy service support for device fingerprint management and request proxying
+- 🆔 **Device ID Management**: Support account-bound device IDs with import/export for device ID mappings
+- 🔄 **API Type Switch**: Support both REST API (GetUsageLimits) and CBOR API (GetUsage) modes
+- 🌐 **Proxy Request Support**: Kiro API requests can be sent through K-Proxy using undici library
+- 📊 **Usage Query Enhancement**: Unified usage query interface with automatic API type adaptation
+
 ### v1.4.5 (2025-01-21)
 - 🐛 **Enterprise Account Dedup Fix**: Fixed enterprise accounts (no email) being incorrectly flagged as duplicates, now uses userId for checking
 - 🎨 **Subscription Badge Color**: Detail page subscription badge color now matches card (PRO+ purple, POWER gold, PRO blue)

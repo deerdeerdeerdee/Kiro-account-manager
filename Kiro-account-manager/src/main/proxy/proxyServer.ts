@@ -14,6 +14,7 @@ import type {
 import { AccountPool } from './accountPool'
 import { callKiroApiStream, callKiroApi, fetchKiroModels, type KiroModel } from './kiroApi'
 import { proxyLogger } from './logger'
+import { getKProxyService, generateDeviceId } from '../kproxy'
 import {
   openaiToKiro,
   claudeToKiro,
@@ -27,6 +28,7 @@ export interface ProxyServerEvents {
   onRequest?: (info: { path: string; method: string; accountId?: string }) => void
   onResponse?: (info: { path: string; status: number; tokens?: number; credits?: number; error?: string }) => void
   onError?: (error: Error) => void
+  onConfigChanged?: (config: ProxyConfig) => void  // API Key 用量更新时触发
   onStatusChange?: (running: boolean, port: number) => void
   onTokenRefresh?: TokenRefreshCallback
   onAccountUpdate?: (account: ProxyAccount) => void
@@ -445,6 +447,9 @@ export class ProxyServer {
     
     if (!account) return null
 
+    // 自动切换 K-Proxy 设备 ID（如果 K-Proxy 服务可用）
+    this.syncKProxyDeviceId(account)
+
     // 检查是否需要刷新 Token
     if (this.isTokenExpiringSoon(account)) {
       const refreshed = await this.refreshToken(account)
@@ -460,6 +465,32 @@ export class ProxyServer {
     }
 
     return account
+  }
+
+  // 同步 K-Proxy 设备 ID（根据账号自动切换）
+  private syncKProxyDeviceId(account: ProxyAccount): void {
+    const kproxyService = getKProxyService()
+    if (!kproxyService || !kproxyService.isRunning()) {
+      return // K-Proxy 未初始化或未运行
+    }
+
+    // 尝试切换到账号绑定的设备 ID
+    const switched = kproxyService.switchToAccount(account.id)
+    
+    if (!switched) {
+      // 账号没有绑定设备 ID，自动生成并绑定
+      const newDeviceId = generateDeviceId()
+      kproxyService.addDeviceIdMapping({
+        accountId: account.id,
+        deviceId: newDeviceId,
+        description: account.email || `Account ${account.id.substring(0, 8)}`,
+        createdAt: Date.now()
+      })
+      kproxyService.setDeviceId(newDeviceId)
+      proxyLogger.info('ProxyServer', `Auto-generated device ID for account ${account.email || account.id.substring(0, 8)}`)
+    } else {
+      proxyLogger.debug('ProxyServer', `Switched to device ID for account ${account.email || account.id.substring(0, 8)}`)
+    }
   }
 
   // 带重试的 API 调用
@@ -545,25 +576,75 @@ export class ProxyServer {
     throw lastError || new Error('Unknown error')
   }
 
-  // 验证 API Key
-  private validateApiKey(req: http.IncomingMessage): boolean {
-    // 如果没有配置 API Key，则跳过验证
-    if (!this.config.apiKey) return true
+  // 验证 API Key 并返回匹配的 Key（用于统计）
+  private validateApiKey(req: http.IncomingMessage): { valid: boolean; apiKey?: import('./types').ApiKey; reason?: string } {
+    // 如果没有配置任何 API Key，则跳过验证
+    const hasApiKeys = this.config.apiKeys && this.config.apiKeys.length > 0
+    const hasLegacyKey = !!this.config.apiKey
+    if (!hasApiKeys && !hasLegacyKey) return { valid: true }
 
     // 从 Authorization 头或 X-Api-Key 头获取 API Key
     const authHeader = req.headers['authorization'] || ''
-    const apiKeyHeader = req.headers['x-api-key'] || ''
+    const apiKeyHeader = (req.headers['x-api-key'] as string) || ''
 
+    let providedKey = ''
     // Bearer token 格式
     if (authHeader.startsWith('Bearer ')) {
-      const token = authHeader.slice(7)
-      if (token === this.config.apiKey) return true
+      providedKey = authHeader.slice(7)
+    }
+    // 直接 API Key 格式
+    if (!providedKey && apiKeyHeader) {
+      providedKey = apiKeyHeader
     }
 
-    // 直接 API Key 格式
-    if (apiKeyHeader === this.config.apiKey) return true
+    if (!providedKey) return { valid: false }
 
-    return false
+    // 检查多 API Key
+    if (hasApiKeys) {
+      const matchedKey = this.config.apiKeys!.find(k => k.enabled && k.key === providedKey)
+      if (matchedKey) {
+        // 检查额度限制
+        if (matchedKey.creditsLimit && matchedKey.usage.totalCredits >= matchedKey.creditsLimit) {
+          return { valid: false, reason: 'Credits limit exceeded' }
+        }
+        return { valid: true, apiKey: matchedKey }
+      }
+    }
+
+    // 兼容旧的单 API Key
+    if (hasLegacyKey && providedKey === this.config.apiKey) {
+      return { valid: true }
+    }
+
+    return { valid: false }
+  }
+
+  // 记录 API Key 用量
+  recordApiKeyUsage(apiKeyId: string, credits: number, inputTokens: number, outputTokens: number): void {
+    if (!this.config.apiKeys) return
+    const apiKey = this.config.apiKeys.find(k => k.id === apiKeyId)
+    if (!apiKey) return
+
+    const today = new Date().toISOString().split('T')[0]
+    
+    // 更新总计
+    apiKey.usage.totalRequests++
+    apiKey.usage.totalCredits += credits
+    apiKey.usage.totalInputTokens += inputTokens
+    apiKey.usage.totalOutputTokens += outputTokens
+    apiKey.lastUsedAt = Date.now()
+
+    // 更新日统计
+    if (!apiKey.usage.daily[today]) {
+      apiKey.usage.daily[today] = { requests: 0, credits: 0, inputTokens: 0, outputTokens: 0 }
+    }
+    apiKey.usage.daily[today].requests++
+    apiKey.usage.daily[today].credits += credits
+    apiKey.usage.daily[today].inputTokens += inputTokens
+    apiKey.usage.daily[today].outputTokens += outputTokens
+
+    // 触发配置保存事件
+    this.events.onConfigChanged?.(this.config)
   }
 
   // 处理请求
@@ -582,9 +663,16 @@ export class ProxyServer {
     this.setCorsHeaders(res)
 
     // API Key 验证（健康检查端点除外）
-    if (path !== '/health' && path !== '/' && !this.validateApiKey(req)) {
-      this.sendError(res, 401, 'Invalid or missing API key')
-      return
+    if (path !== '/health' && path !== '/') {
+      const authResult = this.validateApiKey(req)
+      if (!authResult.valid) {
+        const errorMsg = authResult.reason || 'Invalid or missing API key'
+        const statusCode = authResult.reason === 'Credits limit exceeded' ? 429 : 401
+        this.sendError(res, statusCode, errorMsg)
+        return
+      }
+      // 将匹配的 API Key 存储到请求对象中，用于后续统计
+      ;(req as unknown as { matchedApiKey?: import('./types').ApiKey }).matchedApiKey = authResult.apiKey
     }
 
     // 记录请求
@@ -631,7 +719,8 @@ export class ProxyServer {
     const method = req.method || 'GET'
 
     // 管理 API 需要 API Key 验证
-    if (!this.validateApiKey(req)) {
+    const authResult = this.validateApiKey(req)
+    if (!authResult.valid) {
       this.sendError(res, 401, 'Admin API requires authentication')
       return
     }
@@ -876,6 +965,11 @@ export class ProxyServer {
   private async handleOpenAIChat(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     const body = await this.readBody(req)
     const request: OpenAIChatRequest = JSON.parse(body)
+    const matchedApiKey = (req as unknown as { matchedApiKey?: import('./types').ApiKey }).matchedApiKey
+
+    // 检查是否为该模型默认启用思考模式
+    const modelThinkingEnabled = this.config.modelThinkingMode?.[request.model]
+    const thinkingEnabled = modelThinkingEnabled || (req.headers['anthropic-beta'] as string || '').toLowerCase().includes('thinking')
 
     this.recordNewRequest()
     this.events.onRequest?.({ path: '/v1/chat/completions', method: 'POST' })
@@ -900,7 +994,17 @@ export class ProxyServer {
         : request
 
       // 转换为 Kiro 格式
-      const kiroPayload = openaiToKiro(processedRequest, account.profileArn)
+      let kiroPayload = openaiToKiro(processedRequest, account.profileArn)
+
+      // 如果启用了 thinking 模式，注入系统提示
+      if (thinkingEnabled) {
+        const thinkingPrompt = `<thinking_mode>enabled</thinking_mode>\n<max_thinking_length>200000</max_thinking_length>\n\n`
+        const currentMessage = kiroPayload.conversationState?.currentMessage?.userInputMessage
+        if (currentMessage && typeof currentMessage.content === 'string') {
+          currentMessage.content = thinkingPrompt + currentMessage.content
+        }
+        proxyLogger.info('ProxyServer', 'Thinking mode enabled for request')
+      }
 
       // 记录请求详情到日志
       if (this.config.logRequests) {
@@ -923,7 +1027,7 @@ export class ProxyServer {
 
       if (request.stream) {
         // 流式响应（流式不使用重试机制，错误由流处理）
-        await this.handleOpenAIStream(res, account, kiroPayload, request.model, startTime)
+        await this.handleOpenAIStream(res, account, kiroPayload, request.model, startTime, 0, undefined, false, matchedApiKey)
       } else {
         // 非流式响应（带重试机制）
         const { result, account: usedAccount } = await this.callWithRetry(
@@ -943,6 +1047,10 @@ export class ProxyServer {
         res.end(JSON.stringify(response))
         this.events.onResponse?.({ path: '/v1/chat/completions', status: 200, tokens: result.usage.inputTokens + result.usage.outputTokens })
         this.recordRequest({ path: '/v1/chat/completions', model: request.model, accountId: usedAccount.id, inputTokens: result.usage.inputTokens, outputTokens: result.usage.outputTokens, responseTime: Date.now() - startTime, success: true })
+        // 记录 API Key 用量
+        if (matchedApiKey) {
+          this.recordApiKeyUsage(matchedApiKey.id, result.usage.credits || 0, result.usage.inputTokens, result.usage.outputTokens)
+        }
       }
     } catch (error) {
       this.handleApiError(res, account, error as Error, '/v1/chat/completions', request.model, startTime)
@@ -958,7 +1066,8 @@ export class ProxyServer {
     startTime: number,
     currentRound: number = 0,
     streamId?: string,
-    headersSent: boolean = false
+    headersSent: boolean = false,
+    matchedApiKey?: import('./types').ApiKey
   ): Promise<void> {
     if (!headersSent) {
       res.writeHead(200, {
@@ -1022,6 +1131,10 @@ export class ProxyServer {
           this.accountPool.recordSuccess(account.id, usage.inputTokens + usage.outputTokens)
           this.events.onResponse?.({ path: '/v1/chat/completions', status: 200, tokens: usage.inputTokens + usage.outputTokens, credits: usage.credits })
           this.recordRequest({ path: '/v1/chat/completions', model, accountId: account.id, inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, credits: usage.credits, responseTime: Date.now() - startTime, success: true })
+          // 记录 API Key 用量
+          if (matchedApiKey) {
+            this.recordApiKeyUsage(matchedApiKey.id, usage.credits || 0, usage.inputTokens, usage.outputTokens)
+          }
 
           // 检查是否需要自动继续
           const maxRounds = this.config.autoContinueRounds || 0
@@ -1141,6 +1254,11 @@ export class ProxyServer {
   private async handleClaudeMessages(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     const body = await this.readBody(req)
     const request: ClaudeRequest = JSON.parse(body)
+    const matchedApiKey = (req as unknown as { matchedApiKey?: import('./types').ApiKey }).matchedApiKey
+
+    // 检查是否为该模型默认启用思考模式
+    const modelThinkingEnabled = this.config.modelThinkingMode?.[request.model]
+    const thinkingEnabled = modelThinkingEnabled || (req.headers['anthropic-beta'] as string || '').toLowerCase().includes('thinking')
 
     this.recordNewRequest()
     this.events.onRequest?.({ path: '/v1/messages', method: 'POST' })
@@ -1160,7 +1278,17 @@ export class ProxyServer {
 
     try {
       // 转换为 Kiro 格式
-      const kiroPayload = claudeToKiro(request, account.profileArn)
+      let kiroPayload = claudeToKiro(request, account.profileArn)
+
+      // 如果启用了 thinking 模式，注入系统提示
+      if (thinkingEnabled) {
+        const thinkingPrompt = `<thinking_mode>enabled</thinking_mode>\n<max_thinking_length>200000</max_thinking_length>\n\n`
+        const currentMessage = kiroPayload.conversationState?.currentMessage?.userInputMessage
+        if (currentMessage && typeof currentMessage.content === 'string') {
+          currentMessage.content = thinkingPrompt + currentMessage.content
+        }
+        proxyLogger.info('ProxyServer', 'Thinking mode enabled for Claude request')
+      }
 
       // 记录请求详情到日志
       if (this.config.logRequests) {
@@ -1183,7 +1311,7 @@ export class ProxyServer {
 
       if (request.stream) {
         // 流式响应（流式不使用重试机制，错误由流处理）
-        await this.handleClaudeStream(res, account, kiroPayload, request.model, startTime)
+        await this.handleClaudeStream(res, account, kiroPayload, request.model, startTime, 0, undefined, false, 0, matchedApiKey)
       } else {
         // 非流式响应（带重试机制）
         const { result, account: usedAccount } = await this.callWithRetry(
@@ -1217,9 +1345,10 @@ export class ProxyServer {
     model: string,
     startTime: number,
     currentRound: number = 0,
-    messageId?: string,
+    msgId?: string,
     headersSent: boolean = false,
-    contentBlockIndexStart: number = 0
+    contentBlockIndex: number = 0,
+    matchedApiKey?: import('./types').ApiKey
   ): Promise<void> {
     if (!headersSent) {
       res.writeHead(200, {
@@ -1229,8 +1358,8 @@ export class ProxyServer {
       })
     }
 
-    const msgId = messageId || `msg_${uuidv4()}`
-    let contentBlockIndex = contentBlockIndexStart
+    const id = msgId || `msg_${uuidv4()}`
+    let currentBlockIndex = contentBlockIndex
     let hasStartedTextBlock = false
     let collectedContent = ''
     const pendingToolCalls: Map<string, { name: string; input: Record<string, unknown> }> = new Map()
@@ -1242,7 +1371,7 @@ export class ProxyServer {
     if (currentRound === 0) {
       const messageStart = createClaudeStreamEvent('message_start', {
         message: {
-          id: msgId,
+          id,
           type: 'message',
           role: 'assistant',
           content: [],
@@ -1265,7 +1394,7 @@ export class ProxyServer {
             if (!hasStartedTextBlock) {
               // 开始文本块
               const blockStart = createClaudeStreamEvent('content_block_start', {
-                index: contentBlockIndex,
+                index: currentBlockIndex,
                 content_block: { type: 'text', text: '' }
               })
               res.write(`event: content_block_start\ndata: ${JSON.stringify(blockStart)}\n\n`)
@@ -1273,7 +1402,7 @@ export class ProxyServer {
             }
             // 发送文本 delta
             const delta = createClaudeStreamEvent('content_block_delta', {
-              index: contentBlockIndex,
+              index: currentBlockIndex,
               delta: { type: 'text_delta', text }
             })
             res.write(`event: content_block_delta\ndata: ${JSON.stringify(delta)}\n\n`)
@@ -1281,37 +1410,37 @@ export class ProxyServer {
           if (toolUse) {
             // 结束之前的文本块
             if (hasStartedTextBlock) {
-              const blockStop = createClaudeStreamEvent('content_block_stop', { index: contentBlockIndex })
+              const blockStop = createClaudeStreamEvent('content_block_stop', { index: currentBlockIndex })
               res.write(`event: content_block_stop\ndata: ${JSON.stringify(blockStop)}\n\n`)
-              contentBlockIndex++
+              currentBlockIndex++
               hasStartedTextBlock = false
             }
             // 记录工具调用
             pendingToolCalls.set(toolUse.toolUseId, { name: toolUse.name, input: toolUse.input })
             // 开始工具块
             const toolBlockStart = createClaudeStreamEvent('content_block_start', {
-              index: contentBlockIndex,
+              index: currentBlockIndex,
               content_block: { type: 'tool_use', id: toolUse.toolUseId, name: toolUse.name, input: {} }
             })
             res.write(`event: content_block_start\ndata: ${JSON.stringify(toolBlockStart)}\n\n`)
             // 发送工具输入
             const toolDelta = createClaudeStreamEvent('content_block_delta', {
-              index: contentBlockIndex,
+              index: currentBlockIndex,
               delta: { type: 'input_json_delta', partial_json: JSON.stringify(toolUse.input) } as any
             })
             res.write(`event: content_block_delta\ndata: ${JSON.stringify(toolDelta)}\n\n`)
             // 结束工具块
-            const toolBlockStop = createClaudeStreamEvent('content_block_stop', { index: contentBlockIndex })
+            const toolBlockStop = createClaudeStreamEvent('content_block_stop', { index: currentBlockIndex })
             res.write(`event: content_block_stop\ndata: ${JSON.stringify(toolBlockStop)}\n\n`)
-            contentBlockIndex++
+            currentBlockIndex++
           }
         },
         async (usage) => {
           // 结束最后的文本块
           if (hasStartedTextBlock) {
-            const blockStop = createClaudeStreamEvent('content_block_stop', { index: contentBlockIndex })
+            const blockStop = createClaudeStreamEvent('content_block_stop', { index: currentBlockIndex })
             res.write(`event: content_block_stop\ndata: ${JSON.stringify(blockStop)}\n\n`)
-            contentBlockIndex++
+            currentBlockIndex++
           }
 
           this.recordRequestSuccess()
@@ -1324,6 +1453,10 @@ export class ProxyServer {
           this.accountPool.recordSuccess(account.id, usage.inputTokens + usage.outputTokens)
           this.events.onResponse?.({ path: '/v1/messages', status: 200, tokens: usage.inputTokens + usage.outputTokens, credits: usage.credits })
           this.recordRequest({ path: '/v1/messages', model, accountId: account.id, inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, credits: usage.credits, responseTime: Date.now() - startTime, success: true })
+          // 记录 API Key 用量
+          if (matchedApiKey) {
+            this.recordApiKeyUsage(matchedApiKey.id, usage.credits || 0, usage.inputTokens, usage.outputTokens)
+          }
 
           // 检查是否需要自动继续
           const maxRounds = this.config.autoContinueRounds || 0
@@ -1377,7 +1510,7 @@ export class ProxyServer {
             } as typeof kiroPayload
 
             try {
-              await this.handleClaudeStream(res, account, continuePayload, model, startTime, currentRound + 1, msgId, true, contentBlockIndex)
+              await this.handleClaudeStream(res, account, continuePayload, model, startTime, currentRound + 1, id, true, currentBlockIndex, matchedApiKey)
             } catch (error) {
               console.error('[ProxyServer] Claude auto-continue error:', error)
             }

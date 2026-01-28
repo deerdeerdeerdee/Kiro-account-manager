@@ -102,6 +102,7 @@ export interface Account {
   idp: IdpType
   userId?: string
   visitorId?: string
+  machineId?: string // 账户绑定的设备 ID（64位十六进制）
 
   // 认证信息
   credentials: AccountCredentials

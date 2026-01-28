@@ -233,6 +233,7 @@ export interface ProxyAccount {
   provider?: string
   profileArn?: string
   expiresAt?: number
+  machineId?: string  // 账户绑定的设备 ID（64位十六进制）
   // 运行时状态
   lastUsed?: number
   requestCount?: number
@@ -241,11 +242,42 @@ export interface ProxyAccount {
   cooldownUntil?: number
 }
 
+// API Key 格式类型
+export type ApiKeyFormat = 'sk' | 'simple' | 'token'
+
+// API Key 类型
+export interface ApiKey {
+  id: string
+  name: string
+  key: string
+  format: ApiKeyFormat  // 密钥格式
+  enabled: boolean
+  createdAt: number
+  lastUsedAt?: number
+  // 额度限制
+  creditsLimit?: number  // Credits 上限（undefined 表示无限制）
+  // 用量统计
+  usage: {
+    totalRequests: number
+    totalCredits: number
+    totalInputTokens: number
+    totalOutputTokens: number
+    // 按日期统计（YYYY-MM-DD -> usage）
+    daily: Record<string, {
+      requests: number
+      credits: number
+      inputTokens: number
+      outputTokens: number
+    }>
+  }
+}
+
 export interface ProxyConfig {
   enabled: boolean
   port: number
   host: string
-  apiKey?: string
+  apiKey?: string  // 保留兼容性
+  apiKeys?: ApiKey[]  // 多 API Key 支持
   enableMultiAccount: boolean
   selectedAccountIds: string[]
   logRequests: boolean
@@ -267,6 +299,8 @@ export interface ProxyConfig {
   disableTools?: boolean
   // 单账号模式下额度耗尽自动切换到下一个账号
   autoSwitchOnQuotaExhausted?: boolean
+  // 模型思考模式配置（模型名 -> 是否默认启用思考模式）
+  modelThinkingMode?: Record<string, boolean>
 }
 
 export interface TlsConfig {

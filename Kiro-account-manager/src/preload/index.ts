@@ -49,6 +49,8 @@ const api = {
     id: string
     email: string
     idp?: string
+    needsTokenRefresh?: boolean
+    machineId?: string  // 账户绑定的设备 ID
     credentials: {
       refreshToken: string
       clientId?: string
@@ -719,6 +721,192 @@ const api = {
     ipcRenderer.on('proxy-status-change', handler)
     return () => {
       ipcRenderer.removeListener('proxy-status-change', handler)
+    }
+  },
+
+  // ============ Usage API 类型设置 ============
+
+  // 获取 Usage API 类型
+  getUsageApiType: (): Promise<'rest' | 'cbor'> => {
+    return ipcRenderer.invoke('get-usage-api-type')
+  },
+
+  // 设置 Usage API 类型
+  setUsageApiType: (type: 'rest' | 'cbor'): Promise<{ success: boolean; type: string }> => {
+    return ipcRenderer.invoke('set-usage-api-type', type)
+  },
+
+  // 获取是否使用 K-Proxy 代理
+  getUseKProxyForApi: (): Promise<boolean> => {
+    return ipcRenderer.invoke('get-use-kproxy-for-api')
+  },
+
+  // 设置是否使用 K-Proxy 代理
+  setUseKProxyForApi: (enabled: boolean): Promise<{ success: boolean; enabled: boolean }> => {
+    return ipcRenderer.invoke('set-use-kproxy-for-api', enabled)
+  },
+
+  // ============ K-Proxy MITM 代理 ============
+
+  // 初始化 K-Proxy
+  kproxyInit: (): Promise<{ success: boolean; caInfo?: { certPath: string; fingerprint: string; validFrom: string; validTo: string }; error?: string }> => {
+    return ipcRenderer.invoke('kproxy-init')
+  },
+
+  // 启动 K-Proxy
+  kproxyStart: (config?: { port?: number; host?: string; mitmDomains?: string[]; deviceId?: string }): Promise<{ success: boolean; port?: number; error?: string }> => {
+    return ipcRenderer.invoke('kproxy-start', config)
+  },
+
+  // 停止 K-Proxy
+  kproxyStop: (): Promise<{ success: boolean; error?: string }> => {
+    return ipcRenderer.invoke('kproxy-stop')
+  },
+
+  // 获取 K-Proxy 状态
+  kproxyGetStatus: (): Promise<{ running: boolean; config: unknown; stats: unknown; caInfo: unknown }> => {
+    return ipcRenderer.invoke('kproxy-get-status')
+  },
+
+  // 更新 K-Proxy 配置
+  kproxyUpdateConfig: (config: { port?: number; host?: string; mitmDomains?: string[]; deviceId?: string; autoStart?: boolean; logRequests?: boolean }): Promise<{ success: boolean; config?: unknown; error?: string }> => {
+    return ipcRenderer.invoke('kproxy-update-config', config)
+  },
+
+  // 设置当前设备 ID
+  kproxySetDeviceId: (deviceId: string): Promise<{ success: boolean; error?: string }> => {
+    return ipcRenderer.invoke('kproxy-set-device-id', deviceId)
+  },
+
+  // 生成新的设备 ID
+  kproxyGenerateDeviceId: (): Promise<{ success: boolean; deviceId?: string }> => {
+    return ipcRenderer.invoke('kproxy-generate-device-id')
+  },
+
+  // 添加设备 ID 映射
+  kproxyAddDeviceMapping: (mapping: { accountId: string; deviceId: string; description?: string; createdAt: number }): Promise<{ success: boolean; error?: string }> => {
+    return ipcRenderer.invoke('kproxy-add-device-mapping', mapping)
+  },
+
+  // 获取所有设备 ID 映射
+  kproxyGetDeviceMappings: (): Promise<{ success: boolean; mappings: Array<{ accountId: string; deviceId: string; description?: string; createdAt: number; lastUsed?: number }> }> => {
+    return ipcRenderer.invoke('kproxy-get-device-mappings')
+  },
+
+  // 切换到账号设备 ID
+  kproxySwitchToAccount: (accountId: string): Promise<{ success: boolean; error?: string }> => {
+    return ipcRenderer.invoke('kproxy-switch-to-account', accountId)
+  },
+
+  // 获取 CA 证书
+  kproxyGetCaCert: (): Promise<{ success: boolean; certPem?: string; certPath?: string; fingerprint?: string; error?: string }> => {
+    return ipcRenderer.invoke('kproxy-get-ca-cert')
+  },
+
+  // 导出 CA 证书
+  kproxyExportCaCert: (exportPath?: string): Promise<{ success: boolean; path?: string; error?: string }> => {
+    return ipcRenderer.invoke('kproxy-export-ca-cert', exportPath)
+  },
+
+  // 检查 CA 证书是否已安装
+  kproxyCheckCaCertInstalled: (): Promise<{ success: boolean; installed: boolean; error?: string }> => {
+    return ipcRenderer.invoke('kproxy-check-ca-cert-installed')
+  },
+
+  // ============ API Key 管理 ============
+  
+  // 获取所有 API Keys
+  proxyGetApiKeys: (): Promise<{ success: boolean; apiKeys: Array<{ id: string; name: string; key: string; enabled: boolean; createdAt: number; lastUsedAt?: number; usage: { totalRequests: number; totalCredits: number; totalInputTokens: number; totalOutputTokens: number; daily: Record<string, { requests: number; credits: number; inputTokens: number; outputTokens: number }> } }>; error?: string }> => {
+    return ipcRenderer.invoke('proxy-get-api-keys')
+  },
+
+  // 添加 API Key
+  proxyAddApiKey: (apiKey: { name: string; key?: string; format?: 'sk' | 'simple' | 'token'; creditsLimit?: number }): Promise<{ success: boolean; apiKey?: { id: string; name: string; key: string; format?: 'sk' | 'simple' | 'token'; enabled: boolean; createdAt: number; creditsLimit?: number; usage: { totalRequests: number; totalCredits: number; totalInputTokens: number; totalOutputTokens: number; daily: Record<string, { requests: number; credits: number; inputTokens: number; outputTokens: number }> } }; error?: string }> => {
+    return ipcRenderer.invoke('proxy-add-api-key', apiKey)
+  },
+
+  // 更新 API Key
+  proxyUpdateApiKey: (id: string, updates: { name?: string; key?: string; enabled?: boolean; creditsLimit?: number | null }): Promise<{ success: boolean; apiKey?: { id: string; name: string; key: string; format?: 'sk' | 'simple' | 'token'; enabled: boolean; createdAt: number; creditsLimit?: number; usage: { totalRequests: number; totalCredits: number; totalInputTokens: number; totalOutputTokens: number; daily: Record<string, { requests: number; credits: number; inputTokens: number; outputTokens: number }> } }; error?: string }> => {
+    return ipcRenderer.invoke('proxy-update-api-key', id, updates)
+  },
+
+  // 删除 API Key
+  proxyDeleteApiKey: (id: string): Promise<{ success: boolean; error?: string }> => {
+    return ipcRenderer.invoke('proxy-delete-api-key', id)
+  },
+
+  // 重置 API Key 用量统计
+  proxyResetApiKeyUsage: (id: string): Promise<{ success: boolean; error?: string }> => {
+    return ipcRenderer.invoke('proxy-reset-api-key-usage', id)
+  },
+
+  // 安装 CA 证书到系统信任存储
+  kproxyInstallCaCert: (): Promise<{ success: boolean; message?: string; error?: string }> => {
+    return ipcRenderer.invoke('kproxy-install-ca-cert')
+  },
+
+  // 卸载 CA 证书从系统信任存储
+  kproxyUninstallCaCert: (): Promise<{ success: boolean; message?: string; error?: string }> => {
+    return ipcRenderer.invoke('kproxy-uninstall-ca-cert')
+  },
+
+  // 重置 K-Proxy 统计
+  kproxyResetStats: (): Promise<{ success: boolean }> => {
+    return ipcRenderer.invoke('kproxy-reset-stats')
+  },
+
+  // 监听 K-Proxy 请求事件
+  onKproxyRequest: (callback: (info: { timestamp: number; method: string; host: string; path: string; isMitm: boolean; deviceIdReplaced: boolean }) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, info: { timestamp: number; method: string; host: string; path: string; isMitm: boolean; deviceIdReplaced: boolean }): void => {
+      callback(info)
+    }
+    ipcRenderer.on('kproxy-request', handler)
+    return () => {
+      ipcRenderer.removeListener('kproxy-request', handler)
+    }
+  },
+
+  // 监听 K-Proxy 响应事件
+  onKproxyResponse: (callback: (info: { timestamp: number; host: string; statusCode: number; duration: number }) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, info: { timestamp: number; host: string; statusCode: number; duration: number }): void => {
+      callback(info)
+    }
+    ipcRenderer.on('kproxy-response', handler)
+    return () => {
+      ipcRenderer.removeListener('kproxy-response', handler)
+    }
+  },
+
+  // 监听 K-Proxy 错误事件
+  onKproxyError: (callback: (error: string) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, error: string): void => {
+      callback(error)
+    }
+    ipcRenderer.on('kproxy-error', handler)
+    return () => {
+      ipcRenderer.removeListener('kproxy-error', handler)
+    }
+  },
+
+  // 监听 K-Proxy 状态变化事件
+  onKproxyStatusChange: (callback: (status: { running: boolean; port: number }) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, status: { running: boolean; port: number }): void => {
+      callback(status)
+    }
+    ipcRenderer.on('kproxy-status-change', handler)
+    return () => {
+      ipcRenderer.removeListener('kproxy-status-change', handler)
+    }
+  },
+
+  // 监听 K-Proxy MITM 拦截事件
+  onKproxyMitm: (callback: (info: { host: string; modified: boolean }) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, info: { host: string; modified: boolean }): void => {
+      callback(info)
+    }
+    ipcRenderer.on('kproxy-mitm', handler)
+    return () => {
+      ipcRenderer.removeListener('kproxy-mitm', handler)
     }
   },
 
