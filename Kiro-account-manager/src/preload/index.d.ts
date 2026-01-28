@@ -455,6 +455,23 @@ interface KiroApi {
     error?: string
   }>
 
+  // 检查原作者仓库更新 (GitHub API)
+  checkOriginalRepoUpdates: () => Promise<{
+    hasUpdate: boolean
+    currentVersion?: string
+    latestVersion?: string
+    releaseNotes?: string
+    releaseName?: string
+    releaseUrl?: string
+    publishedAt?: string
+    assets?: Array<{
+      name: string
+      downloadUrl: string
+      size: number
+    }>
+    error?: string
+  }>
+
   // 下载更新
   downloadUpdate: () => Promise<{ success: boolean; error?: string }>
 

@@ -32,6 +32,9 @@ export function AboutPage() {
   const [isCheckingUpdate, setIsCheckingUpdate] = useState(false)
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null)
   const [showUpdateModal, setShowUpdateModal] = useState(false)
+  const [isCheckingOriginal, setIsCheckingOriginal] = useState(false)
+  const [originalUpdateInfo, setOriginalUpdateInfo] = useState<UpdateInfo | null>(null)
+  const [showOriginalUpdateModal, setShowOriginalUpdateModal] = useState(false)
   const { darkMode } = useAccountsStore()
   const { t } = useTranslation()
   const isEn = t('common.unknown') === 'Unknown'
@@ -54,6 +57,19 @@ export function AboutPage() {
       console.error('Check update failed:', error)
     } finally {
       setIsCheckingUpdate(false)
+    }
+  }
+
+  const checkOriginalRepoUpdates = async () => {
+    setIsCheckingOriginal(true)
+    try {
+      const result = await window.api.checkOriginalRepoUpdates()
+      setOriginalUpdateInfo(result)
+      setShowOriginalUpdateModal(true)
+    } catch (error) {
+      console.error('Check original repo update failed:', error)
+    } finally {
+      setIsCheckingOriginal(false)
     }
   }
 
@@ -100,6 +116,16 @@ export function AboutPage() {
             variant="outline"
             size="sm"
             className="gap-2"
+            onClick={checkOriginalRepoUpdates}
+            disabled={isCheckingOriginal}
+          >
+            <Github className={cn("h-4 w-4", isCheckingOriginal && "animate-spin")} />
+            {isCheckingOriginal ? (isEn ? 'Checking...' : '检查中...') : (isEn ? 'Check Original' : '检查原版')}
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-2"
             onClick={() => setShowGroupQR(true)}
           >
             <MessageCircle className="h-4 w-4" />
@@ -128,10 +154,11 @@ export function AboutPage() {
             <button
               className="absolute top-3 right-3 text-muted-foreground hover:text-foreground"
               onClick={() => setShowUpdateModal(false)}
+              title={isEn ? 'Close' : '关闭'}
             >
               <X className="h-5 w-5" />
             </button>
-            
+
             <div className="space-y-4">
               {updateInfo.hasUpdate ? (
                 <>
@@ -146,7 +173,7 @@ export function AboutPage() {
                       </p>
                     </div>
                   </div>
-                  
+
                   <div className="bg-muted/50 rounded-lg p-3">
                     <p className="text-sm font-medium mb-2">{updateInfo.releaseName}</p>
                     {updateInfo.publishedAt && (
@@ -155,7 +182,7 @@ export function AboutPage() {
                       </p>
                     )}
                   </div>
-                  
+
                   {updateInfo.releaseNotes && (
                     <div className="space-y-2">
                       <p className="text-sm font-medium">{isEn ? 'Release Notes:' : '更新内容:'}</p>
@@ -164,7 +191,7 @@ export function AboutPage() {
                       </div>
                     </div>
                   )}
-                  
+
                   {updateInfo.assets && updateInfo.assets.length > 0 && (
                     <div className="space-y-2">
                       <p className="text-sm font-medium">{isEn ? 'Download Files:' : '下载文件:'}</p>
@@ -183,7 +210,7 @@ export function AboutPage() {
                       </div>
                     </div>
                   )}
-                  
+
                   <Button className="w-full gap-2" onClick={openReleasePage}>
                     <ExternalLink className="h-4 w-4" />
                     {isEn ? 'Go to Download Page' : '前往下载页面'}
@@ -224,6 +251,115 @@ export function AboutPage() {
         </div>
       )}
 
+      {/* 原作者仓库更新弹窗 */}
+      {showOriginalUpdateModal && originalUpdateInfo && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/50" onClick={() => setShowOriginalUpdateModal(false)} />
+          <div className="relative bg-card rounded-xl p-6 shadow-xl z-10 max-w-md w-full mx-4 max-h-[80vh] overflow-y-auto">
+            <button
+              className="absolute top-3 right-3 text-muted-foreground hover:text-foreground"
+              onClick={() => setShowOriginalUpdateModal(false)}
+              title={isEn ? 'Close' : '关闭'}
+            >
+              <X className="h-5 w-5" />
+            </button>
+
+            <div className="space-y-4">
+              {originalUpdateInfo.hasUpdate ? (
+                <>
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 rounded-full bg-blue-500/10">
+                      <Github className="h-6 w-6 text-blue-500" />
+                    </div>
+                    <div>
+                      <h3 className="font-semibold text-lg">{isEn ? 'Original Repo Update' : '原作者仓库有更新'}</h3>
+                      <p className="text-sm text-muted-foreground">
+                        {isEn ? 'Latest' : '最新版本'}: {originalUpdateInfo.latestVersion}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="bg-muted/50 rounded-lg p-3">
+                    <p className="text-sm font-medium mb-2">{originalUpdateInfo.releaseName}</p>
+                    {originalUpdateInfo.publishedAt && (
+                      <p className="text-xs text-muted-foreground">
+                        {isEn ? `Released: ${new Date(originalUpdateInfo.publishedAt).toLocaleDateString('en-US')}` : `发布时间: ${new Date(originalUpdateInfo.publishedAt).toLocaleDateString('zh-CN')}`}
+                      </p>
+                    )}
+                  </div>
+
+                  {originalUpdateInfo.releaseNotes && (
+                    <div className="space-y-2">
+                      <p className="text-sm font-medium">{isEn ? 'Release Notes:' : '更新内容:'}</p>
+                      <div className="text-sm text-muted-foreground bg-muted/30 rounded-lg p-3 max-h-32 overflow-y-auto whitespace-pre-wrap">
+                        {originalUpdateInfo.releaseNotes}
+                      </div>
+                    </div>
+                  )}
+
+                  {originalUpdateInfo.assets && originalUpdateInfo.assets.length > 0 && (
+                    <div className="space-y-2">
+                      <p className="text-sm font-medium">{isEn ? 'Download Files:' : '下载文件:'}</p>
+                      <div className="space-y-1 max-h-32 overflow-y-auto">
+                        {originalUpdateInfo.assets.slice(0, 6).map((asset, i) => (
+                          <div key={i} className="flex items-center justify-between text-xs bg-muted/30 rounded px-2 py-1">
+                            <span className="truncate flex-1">{asset.name}</span>
+                            <span className="text-muted-foreground ml-2">{formatFileSize(asset.size)}</span>
+                          </div>
+                        ))}
+                        {originalUpdateInfo.assets.length > 6 && (
+                          <p className="text-xs text-muted-foreground text-center">
+                            {isEn ? `${originalUpdateInfo.assets.length - 6} more files...` : `还有 ${originalUpdateInfo.assets.length - 6} 个文件...`}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  <Button className="w-full gap-2" onClick={() => originalUpdateInfo.releaseUrl && window.api.openExternal(originalUpdateInfo.releaseUrl)}>
+                    <ExternalLink className="h-4 w-4" />
+                    {isEn ? 'Go to Original Repo' : '前往原作者仓库'}
+                  </Button>
+                </>
+              ) : originalUpdateInfo.error ? (
+                <>
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 rounded-full bg-red-500/10">
+                      <AlertCircle className="h-6 w-6 text-red-500" />
+                    </div>
+                    <div>
+                      <h3 className="font-semibold text-lg">{isEn ? 'Check Failed' : '检查失败'}</h3>
+                      <p className="text-sm text-muted-foreground">{originalUpdateInfo.error}</p>
+                    </div>
+                  </div>
+                  <Button variant="outline" className="w-full" onClick={checkOriginalRepoUpdates}>
+                    {isEn ? 'Retry' : '重试'}
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 rounded-full bg-green-500/10">
+                      <CheckCircle className="h-6 w-6 text-green-500" />
+                    </div>
+                    <div>
+                      <h3 className="font-semibold text-lg">{isEn ? 'No New Updates' : '原作者仓库暂无更新'}</h3>
+                      <p className="text-sm text-muted-foreground">
+                        {isEn ? `Original repo version: v${originalUpdateInfo.latestVersion}` : `原作者仓库版本: v${originalUpdateInfo.latestVersion}`}
+                      </p>
+                    </div>
+                  </div>
+                  <Button variant="outline" className="w-full gap-2" onClick={() => window.api.openExternal('https://github.com/chaogei/Kiro-account-manager/releases')}>
+                    <ExternalLink className="h-4 w-4" />
+                    {isEn ? 'View All Releases' : '查看所有版本'}
+                  </Button>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* 交流群弹窗 */}
       {showGroupQR && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
@@ -232,6 +368,7 @@ export function AboutPage() {
             <button
               className="absolute top-3 right-3 text-muted-foreground hover:text-foreground"
               onClick={() => setShowGroupQR(false)}
+              title={isEn ? 'Close' : '关闭'}
             >
               <X className="h-5 w-5" />
             </button>

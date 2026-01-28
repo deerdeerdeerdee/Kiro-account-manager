@@ -445,6 +445,25 @@ const api = {
     return ipcRenderer.invoke('check-for-updates-manual')
   },
 
+  // 检查原作者仓库更新 (GitHub API)
+  checkOriginalRepoUpdates: (): Promise<{
+    hasUpdate: boolean
+    currentVersion?: string
+    latestVersion?: string
+    releaseNotes?: string
+    releaseName?: string
+    releaseUrl?: string
+    publishedAt?: string
+    assets?: Array<{
+      name: string
+      downloadUrl: string
+      size: number
+    }>
+    error?: string
+  }> => {
+    return ipcRenderer.invoke('check-original-repo-updates')
+  },
+
   // 下载更新
   downloadUpdate: (): Promise<{ success: boolean; error?: string }> => {
     return ipcRenderer.invoke('download-update')
