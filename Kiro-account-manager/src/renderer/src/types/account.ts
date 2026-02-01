@@ -52,6 +52,7 @@ export interface AccountUsage {
   bonuses?: BonusUsage[]  // 奖励额度列表
   nextResetDate?: string  // 重置日期
   resourceDetail?: ResourceDetail // 资源详情
+  usageUnknown?: boolean  // 标记用量信息是否未知（API 不可用）
 }
 
 /**
@@ -120,6 +121,7 @@ export interface Account {
   status: AccountStatus
   lastError?: string
   isActive: boolean // 是否为当前激活账号
+  unlimitedUsage?: boolean // 手动标记为无限用量账号（用量接口不可用时）
 
   // 时间戳
   createdAt: number

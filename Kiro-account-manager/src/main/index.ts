@@ -2256,8 +2256,23 @@ app.whenReady().then(async () => {
                 const errMsg = apiError instanceof Error ? apiError.message : String(apiError)
                 console.log(`[BackgroundRefresh] Usage API error for ${account.id}:`, errMsg)
                 if (errMsg.includes('AccountSuspendedException') || errMsg.includes('423')) {
+                  // 账号被封禁
                   status = 'error'
                   errorMessage = errMsg
+                } else {
+                  // 其他错误（如企业端关闭用量接口）：Token 刷新成功，账号仍可用
+                  // 设置用量为"未知"状态
+                  parsedUsage = {
+                    current: 0,
+                    limit: 999999,  // 无限用量标记
+                    baseCurrent: 0,
+                    baseLimit: 999999,
+                    freeTrialCurrent: 0,
+                    freeTrialLimit: 0,
+                    bonuses: [],
+                    usageUnknown: true  // 标记用量未知
+                  }
+                  console.log(`[BackgroundRefresh] Usage API unavailable for ${account.id}, marking as unlimited`)
                 }
               }
 

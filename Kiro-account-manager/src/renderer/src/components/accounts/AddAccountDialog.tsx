@@ -84,6 +84,7 @@ export function AddAccountDialog({ isOpen, onClose }: AddAccountDialogProps): Re
   const [region, setRegion] = useState('us-east-1')
   const [authMethod, setAuthMethod] = useState<'IdC' | 'social'>('IdC')
   const [provider, setProvider] = useState('BuilderId')  // 'BuilderId', 'Enterprise', 'Github', 'Google'
+  const [unlimitedUsage, setUnlimitedUsage] = useState(false)  // 标记为无限用量账号
 
   // SSO Token 导入
   const [ssoToken, setSsoToken] = useState('')
@@ -860,6 +861,7 @@ export function AddAccountDialog({ isOpen, onClose }: AddAccountDialogProps): Re
           userId,
           nickname: email ? email.split('@')[0] : undefined,
           idp: providerName as 'BuilderId' | 'Github' | 'Google',
+          unlimitedUsage,
           credentials: {
             accessToken: result.data.accessToken,
             csrfToken: '',
@@ -922,6 +924,7 @@ export function AddAccountDialog({ isOpen, onClose }: AddAccountDialogProps): Re
     setRegion('us-east-1')
     setAuthMethod('IdC')
     setProvider('BuilderId')
+    setUnlimitedUsage(false)
     setSsoToken('')
     setVerifiedData(null)
     setError(null)
@@ -1541,6 +1544,33 @@ export function AddAccountDialog({ isOpen, onClose }: AddAccountDialogProps): Re
                             <option value="eu-west-1">eu-west-1 (Ireland)</option>
                           </select>
                         </div>
+
+                        {/* 无限用量标记 - 仅在 Enterprise 账号时显示 */}
+                        {provider === 'Enterprise' && (
+                          <div className="flex items-center justify-between p-3 bg-muted/30 rounded-xl border">
+                            <div className="space-y-0.5">
+                              <label className="text-sm font-medium">{isEn ? 'Mark as Unlimited Usage' : '标记为无限用量'}</label>
+                              <p className="text-xs text-muted-foreground">
+                                {isEn ? 'Enable this if the usage API is unavailable' : '如果用量接口不可用，请启用此选项'}
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              role="switch"
+                              aria-checked={unlimitedUsage}
+                              onClick={() => setUnlimitedUsage(!unlimitedUsage)}
+                              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 ${
+                                unlimitedUsage ? 'bg-primary' : 'bg-input'
+                              }`}
+                            >
+                              <span
+                                className={`inline-block h-4 w-4 transform rounded-full bg-background shadow-sm transition-transform ${
+                                  unlimitedUsage ? 'translate-x-6' : 'translate-x-1'
+                                }`}
+                              />
+                            </button>
+                          </div>
+                        )}
                       </>
                     )}
                   </div>

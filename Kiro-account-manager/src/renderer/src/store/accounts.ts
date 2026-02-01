@@ -1685,10 +1685,16 @@ export const useAccountsStore = create<AccountsStore>()((set, get) => ({
 
     // 刷新当前账号状态获取最新余额
     await checkAccountStatus(activeAccount.id)
-    
+
     // 重新获取更新后的账号信息
     const updatedAccount = get().accounts.get(activeAccount.id)
     if (!updatedAccount) return
+
+    // 如果用量未知或手动标记为无限用量，跳过检查
+    if (updatedAccount.usage.usageUnknown || updatedAccount.unlimitedUsage) {
+      console.log(`[AutoSwitch] Account ${updatedAccount.email} has unknown/unlimited usage, skipping check`)
+      return
+    }
 
     const remaining = updatedAccount.usage.limit - updatedAccount.usage.current
     console.log(`[AutoSwitch] Remaining: ${remaining}, Threshold: ${autoSwitchThreshold}`)
@@ -1705,6 +1711,8 @@ export const useAccountsStore = create<AccountsStore>()((set, get) => ({
         // 排除被封禁的账号
         if (acc.lastError?.includes('UnauthorizedException') ||
             acc.lastError?.includes('AccountSuspendedException')) return false
+        // 用量未知或无限用量的账号始终可用
+        if (acc.usage.usageUnknown || acc.unlimitedUsage) return true
         // 排除余额不足的账号（limit 为 0 的账号视为额度未知，不排除）
         if (acc.usage.limit > 0) {
           const accRemaining = acc.usage.limit - acc.usage.current
@@ -2021,11 +2029,12 @@ export const useAccountsStore = create<AccountsStore>()((set, get) => ({
         usage: refreshData?.usage ? (() => {
           const newCurrent = refreshData.usage.current ?? account.usage.current
           const newLimit = refreshData.usage.limit ?? account.usage.limit
+          const usageUnknown = (refreshData.usage as { usageUnknown?: boolean }).usageUnknown ?? account.usage.usageUnknown
           return {
             ...account.usage,
             current: newCurrent,
             limit: newLimit,
-            percentUsed: newLimit > 0 ? newCurrent / newLimit : 0,
+            percentUsed: usageUnknown ? 0 : (newLimit > 0 ? newCurrent / newLimit : 0),
             baseCurrent: refreshData.usage.baseCurrent ?? account.usage.baseCurrent,
             baseLimit: refreshData.usage.baseLimit ?? account.usage.baseLimit,
             freeTrialCurrent: refreshData.usage.freeTrialCurrent ?? account.usage.freeTrialCurrent,
@@ -2033,7 +2042,8 @@ export const useAccountsStore = create<AccountsStore>()((set, get) => ({
             freeTrialExpiry: refreshData.usage.freeTrialExpiry ?? account.usage.freeTrialExpiry,
             bonuses: refreshData.usage.bonuses ?? account.usage.bonuses,
             nextResetDate: refreshData.usage.nextResetDate ?? account.usage.nextResetDate,
-            lastUpdated: now
+            lastUpdated: now,
+            usageUnknown
           }
         })() : account.usage,
         subscription: refreshData?.subscription ? {

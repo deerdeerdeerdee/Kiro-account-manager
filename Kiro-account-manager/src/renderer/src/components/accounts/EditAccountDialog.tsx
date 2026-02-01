@@ -28,6 +28,7 @@ export function EditAccountDialog({
 
   // 可编辑字段
   const [nickname, setNickname] = useState('')
+  const [unlimitedUsage, setUnlimitedUsage] = useState(false)
 
   // 自动获取的信息（只读显示）
   const [accountInfo, setAccountInfo] = useState<{
@@ -72,6 +73,7 @@ export function EditAccountDialog({
       setClientSecret(account.credentials.clientSecret || '')
       setRegion(account.credentials.region || 'us-east-1')
       setNickname(account.nickname || '')
+      setUnlimitedUsage(account.unlimitedUsage || false)
       
       // 设置当前账号信息
       setAccountInfo({
@@ -169,6 +171,7 @@ export function EditAccountDialog({
       email: accountInfo.email,
       userId: accountInfo.userId,
       nickname: nickname || undefined,
+      unlimitedUsage,
       credentials: {
         ...account.credentials,
         accessToken: accountInfo.accessToken,
@@ -268,6 +271,31 @@ export function EditAccountDialog({
               placeholder={isEn ? 'Give this account a memorable name' : '给这个账号起个好记的名字'}
               className="w-full h-10 px-3 py-2 text-sm rounded-xl border border-input bg-background/50 ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
             />
+          </div>
+
+          {/* 无限用量标记 */}
+          <div className="flex items-center justify-between p-3 bg-muted/30 rounded-xl border">
+            <div className="space-y-0.5">
+              <label className="text-sm font-medium">{isEn ? 'Mark as Unlimited Usage' : '标记为无限用量'}</label>
+              <p className="text-xs text-muted-foreground">
+                {isEn ? 'Enable this if the usage API is unavailable for this account' : '如果该账号的用量接口不可用，请启用此选项'}
+              </p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={unlimitedUsage}
+              onClick={() => setUnlimitedUsage(!unlimitedUsage)}
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 ${
+                unlimitedUsage ? 'bg-primary' : 'bg-input'
+              }`}
+            >
+              <span
+                className={`inline-block h-4 w-4 transform rounded-full bg-background shadow-sm transition-transform ${
+                  unlimitedUsage ? 'translate-x-6' : 'translate-x-1'
+                }`}
+              />
+            </button>
           </div>
 
           {/* 凭证配置 */}
