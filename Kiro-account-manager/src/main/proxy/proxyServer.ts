@@ -972,12 +972,58 @@ export class ProxyServer {
     streamId?: string,
     headersSent: boolean = false
   ): Promise<void> {
+    // 诊断：追踪响应写入状态
+    let writeCount = 0
+    let totalBytesWritten = 0
+    let lastWriteSuccess = true
+    let clientDisconnected = false
+
+    // 监听客户端断开连接
+    res.on('close', () => {
+      if (!res.writableEnded) {
+        clientDisconnected = true
+        proxyLogger.warn('ProxyServer', 'Client disconnected before response completed', {
+          writeCount,
+          totalBytesWritten,
+          elapsed: Date.now() - startTime
+        })
+      }
+    })
+
+    // 安全写入函数，带诊断日志
+    const safeWrite = (data: string, label: string): boolean => {
+      if (clientDisconnected) {
+        proxyLogger.warn('ProxyServer', `Skipping write (client disconnected): ${label}`)
+        return false
+      }
+      if (res.writableEnded) {
+        proxyLogger.warn('ProxyServer', `Skipping write (stream ended): ${label}`)
+        return false
+      }
+      try {
+        const result = res.write(data)
+        writeCount++
+        totalBytesWritten += Buffer.byteLength(data)
+        if (!result) {
+          // 缓冲区满，需要等待 drain 事件
+          proxyLogger.debug('ProxyServer', `Write buffered (backpressure): ${label}`, { writeCount, bytes: Buffer.byteLength(data) })
+        }
+        lastWriteSuccess = true
+        return true
+      } catch (err) {
+        lastWriteSuccess = false
+        proxyLogger.error('ProxyServer', `Write failed: ${label}`, { error: (err as Error).message, writeCount })
+        return false
+      }
+    }
+
     if (!headersSent) {
       res.writeHead(200, {
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache',
         'Connection': 'keep-alive'
       })
+      proxyLogger.debug('ProxyServer', 'OpenAI stream headers sent')
     }
 
     const id = streamId || `chatcmpl-${uuidv4()}`
@@ -988,7 +1034,7 @@ export class ProxyServer {
     // 发送初始 chunk（仅首轮）
     if (currentRound === 0) {
       const initialChunk = createOpenaiStreamChunk(id, model, { role: 'assistant' })
-      res.write(`data: ${JSON.stringify(initialChunk)}\n\n`)
+      safeWrite(`data: ${JSON.stringify(initialChunk)}\n\n`, 'initial_chunk')
     }
 
     return new Promise((resolve) => {
@@ -999,7 +1045,7 @@ export class ProxyServer {
           if (text) {
             collectedContent += text
             const chunk = createOpenaiStreamChunk(id, model, { content: text })
-            res.write(`data: ${JSON.stringify(chunk)}\n\n`)
+            safeWrite(`data: ${JSON.stringify(chunk)}\n\n`, 'content_chunk')
           }
           if (toolUse) {
             const idx = toolCallIndex++
@@ -1020,7 +1066,7 @@ export class ProxyServer {
                 }
               }]
             })
-            res.write(`data: ${JSON.stringify(toolChunk)}\n\n`)
+            safeWrite(`data: ${JSON.stringify(toolChunk)}\n\n`, 'tool_chunk')
           }
         },
         async (usage) => {
@@ -1127,9 +1173,18 @@ export class ProxyServer {
               usageInfo.completion_tokens_details = { reasoning_tokens: usage.reasoningTokens }
             }
             const finalChunk = createOpenaiStreamChunk(id, model, {}, finishReason, usageInfo)
-            res.write(`data: ${JSON.stringify(finalChunk)}\n\n`)
-            res.write('data: [DONE]\n\n')
-            proxyLogger.info('ProxyServer', 'OpenAI stream completed', { contentLength: collectedContent.length })
+            safeWrite(`data: ${JSON.stringify(finalChunk)}\n\n`, 'final_chunk')
+            safeWrite('data: [DONE]\n\n', 'done_marker')
+
+            // 详细的完成日志
+            proxyLogger.info('ProxyServer', 'OpenAI stream completed', {
+              contentLength: collectedContent.length,
+              writeCount,
+              totalBytesWritten,
+              clientDisconnected,
+              lastWriteSuccess,
+              elapsed: Date.now() - startTime
+            })
             res.end()
             resolve()
           }
@@ -1234,12 +1289,57 @@ export class ProxyServer {
     headersSent: boolean = false,
     contentBlockIndexStart: number = 0
   ): Promise<void> {
+    // 诊断：追踪响应写入状态
+    let writeCount = 0
+    let totalBytesWritten = 0
+    let lastWriteSuccess = true
+    let clientDisconnected = false
+
+    // 监听客户端断开连接
+    res.on('close', () => {
+      if (!res.writableEnded) {
+        clientDisconnected = true
+        proxyLogger.warn('ProxyServer', 'Claude client disconnected before response completed', {
+          writeCount,
+          totalBytesWritten,
+          elapsed: Date.now() - startTime
+        })
+      }
+    })
+
+    // 安全写入函数，带诊断日志
+    const safeWrite = (data: string, label: string): boolean => {
+      if (clientDisconnected) {
+        proxyLogger.warn('ProxyServer', `Claude: Skipping write (client disconnected): ${label}`)
+        return false
+      }
+      if (res.writableEnded) {
+        proxyLogger.warn('ProxyServer', `Claude: Skipping write (stream ended): ${label}`)
+        return false
+      }
+      try {
+        const result = res.write(data)
+        writeCount++
+        totalBytesWritten += Buffer.byteLength(data)
+        if (!result) {
+          proxyLogger.debug('ProxyServer', `Claude: Write buffered (backpressure): ${label}`, { writeCount, bytes: Buffer.byteLength(data) })
+        }
+        lastWriteSuccess = true
+        return true
+      } catch (err) {
+        lastWriteSuccess = false
+        proxyLogger.error('ProxyServer', `Claude: Write failed: ${label}`, { error: (err as Error).message, writeCount })
+        return false
+      }
+    }
+
     if (!headersSent) {
       res.writeHead(200, {
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache',
         'Connection': 'keep-alive'
       })
+      proxyLogger.debug('ProxyServer', 'Claude stream headers sent')
     }
 
     const msgId = messageId || `msg_${uuidv4()}`
@@ -1250,7 +1350,7 @@ export class ProxyServer {
 
     // 估算输入 tokens（基于 payload 大小）
     const estimatedInputTokens = Math.max(1, Math.round(JSON.stringify(kiroPayload).length / 3))
-    
+
     // 发送 message_start（仅首轮）
     if (currentRound === 0) {
       const messageStart = createClaudeStreamEvent('message_start', {
@@ -1265,7 +1365,7 @@ export class ProxyServer {
           usage: { input_tokens: estimatedInputTokens, output_tokens: 0 }
         }
       })
-      res.write(`event: message_start\ndata: ${JSON.stringify(messageStart)}\n\n`)
+      safeWrite(`event: message_start\ndata: ${JSON.stringify(messageStart)}\n\n`, 'message_start')
     }
 
     return new Promise((resolve) => {
@@ -1281,7 +1381,7 @@ export class ProxyServer {
                 index: contentBlockIndex,
                 content_block: { type: 'text', text: '' }
               })
-              res.write(`event: content_block_start\ndata: ${JSON.stringify(blockStart)}\n\n`)
+              safeWrite(`event: content_block_start\ndata: ${JSON.stringify(blockStart)}\n\n`, 'text_block_start')
               hasStartedTextBlock = true
             }
             // 发送文本 delta
@@ -1289,13 +1389,13 @@ export class ProxyServer {
               index: contentBlockIndex,
               delta: { type: 'text_delta', text }
             })
-            res.write(`event: content_block_delta\ndata: ${JSON.stringify(delta)}\n\n`)
+            safeWrite(`event: content_block_delta\ndata: ${JSON.stringify(delta)}\n\n`, 'text_delta')
           }
           if (toolUse) {
             // 结束之前的文本块
             if (hasStartedTextBlock) {
               const blockStop = createClaudeStreamEvent('content_block_stop', { index: contentBlockIndex })
-              res.write(`event: content_block_stop\ndata: ${JSON.stringify(blockStop)}\n\n`)
+              safeWrite(`event: content_block_stop\ndata: ${JSON.stringify(blockStop)}\n\n`, 'text_block_stop')
               contentBlockIndex++
               hasStartedTextBlock = false
             }
@@ -1306,16 +1406,16 @@ export class ProxyServer {
               index: contentBlockIndex,
               content_block: { type: 'tool_use', id: toolUse.toolUseId, name: toolUse.name, input: {} }
             })
-            res.write(`event: content_block_start\ndata: ${JSON.stringify(toolBlockStart)}\n\n`)
+            safeWrite(`event: content_block_start\ndata: ${JSON.stringify(toolBlockStart)}\n\n`, 'tool_block_start')
             // 发送工具输入
             const toolDelta = createClaudeStreamEvent('content_block_delta', {
               index: contentBlockIndex,
               delta: { type: 'input_json_delta', partial_json: JSON.stringify(toolUse.input) } as any
             })
-            res.write(`event: content_block_delta\ndata: ${JSON.stringify(toolDelta)}\n\n`)
+            safeWrite(`event: content_block_delta\ndata: ${JSON.stringify(toolDelta)}\n\n`, 'tool_delta')
             // 结束工具块
             const toolBlockStop = createClaudeStreamEvent('content_block_stop', { index: contentBlockIndex })
-            res.write(`event: content_block_stop\ndata: ${JSON.stringify(toolBlockStop)}\n\n`)
+            safeWrite(`event: content_block_stop\ndata: ${JSON.stringify(toolBlockStop)}\n\n`, 'tool_block_stop')
             contentBlockIndex++
           }
         },
@@ -1323,7 +1423,7 @@ export class ProxyServer {
           // 结束最后的文本块
           if (hasStartedTextBlock) {
             const blockStop = createClaudeStreamEvent('content_block_stop', { index: contentBlockIndex })
-            res.write(`event: content_block_stop\ndata: ${JSON.stringify(blockStop)}\n\n`)
+            safeWrite(`event: content_block_stop\ndata: ${JSON.stringify(blockStop)}\n\n`, 'final_text_block_stop')
             contentBlockIndex++
           }
 
@@ -1402,21 +1502,36 @@ export class ProxyServer {
               delta: { stop_reason: stopReason, stop_sequence: null } as any,
               usage: { input_tokens: usage.inputTokens, output_tokens: usage.outputTokens }
             })
-            res.write(`event: message_delta\ndata: ${JSON.stringify(messageDelta)}\n\n`)
+            safeWrite(`event: message_delta\ndata: ${JSON.stringify(messageDelta)}\n\n`, 'message_delta')
             // 发送 message_stop
             const messageStop = createClaudeStreamEvent('message_stop')
-            res.write(`event: message_stop\ndata: ${JSON.stringify(messageStop)}\n\n`)
-            proxyLogger.info('ProxyServer', 'Claude stream completed', { contentLength: collectedContent.length })
+            safeWrite(`event: message_stop\ndata: ${JSON.stringify(messageStop)}\n\n`, 'message_stop')
+
+            // 详细的完成日志
+            proxyLogger.info('ProxyServer', 'Claude stream completed', {
+              contentLength: collectedContent.length,
+              writeCount,
+              totalBytesWritten,
+              clientDisconnected,
+              lastWriteSuccess,
+              elapsed: Date.now() - startTime
+            })
             res.end()
             resolve()
           }
         },
         (error) => {
-          proxyLogger.error('ProxyServer', 'Claude stream error', { error: error.message, contentCollected: collectedContent.length })
+          proxyLogger.error('ProxyServer', 'Claude stream error', {
+            error: error.message,
+            contentCollected: collectedContent.length,
+            writeCount,
+            totalBytesWritten,
+            clientDisconnected
+          })
           const errorEvent = createClaudeStreamEvent('error', {
             error: { type: 'api_error', message: error.message }
           })
-          res.write(`event: error\ndata: ${JSON.stringify(errorEvent)}\n\n`)
+          safeWrite(`event: error\ndata: ${JSON.stringify(errorEvent)}\n\n`, 'error_event')
           res.end()
 
           this.recordRequestFailed()
