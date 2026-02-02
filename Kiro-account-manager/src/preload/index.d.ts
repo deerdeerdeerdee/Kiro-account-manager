@@ -560,6 +560,12 @@ interface KiroApi {
   // 获取反代日志数量
   proxyGetLogsCount: () => Promise<number>
 
+  // 打开日志目录
+  proxyOpenLogDir: () => Promise<{ success: boolean; path?: string; error?: string }>
+
+  // 获取日志目录路径
+  proxyGetLogDir: () => Promise<string | null>
+
   // 更新反代服务器配置
   proxyUpdateConfig: (config: { port?: number; host?: string; apiKey?: string; enableMultiAccount?: boolean; selectedAccountIds?: string[]; logRequests?: boolean; autoStart?: boolean; maxRetries?: number; preferredEndpoint?: 'codewhisperer' | 'amazonq'; autoContinueRounds?: number; disableTools?: boolean; autoSwitchOnQuotaExhausted?: boolean }) => Promise<{ success: boolean; config?: unknown; error?: string }>
 

@@ -581,24 +581,33 @@ async function parseEventStream(
 ): Promise<void> {
   const reader = body.getReader()
   let buffer = new Uint8Array(0)
-  let usage = { 
-    inputTokens: 0, 
-    outputTokens: 0, 
+  let usage = {
+    inputTokens: 0,
+    outputTokens: 0,
     credits: 0,
     cacheReadTokens: 0,
     cacheWriteTokens: 0,
     reasoningTokens: 0
   }
-  
+
+  // 诊断日志：流处理统计
+  const streamStartTime = Date.now()
+  let chunkCount = 0
+  let totalBytesReceived = 0
+  let eventCount = 0
+  let hasReceivedContent = false
+
+  proxyLogger.debug('EventStream', 'Stream started', { startTime: new Date(streamStartTime).toISOString() })
+
   // 累积输出文本长度，用于估算 tokens
   let totalOutputChars = 0
-  
+
   // 估算 input tokens（基于输入字符长度）
   // 约 3 个字符 = 1 token（混合中英文场景的保守估计）
   if (inputChars > 0) {
     usage.inputTokens = Math.max(1, Math.round(inputChars / 3))
   }
-  
+
   // Tool use 状态跟踪 - 用于累积输入片段
   let currentToolUse: ToolUseState | null = null
   const processedIds = new Set<string>()
@@ -606,9 +615,32 @@ async function parseEventStream(
   try {
     while (true) {
       const { done, value } = await reader.read()
-      
+
       if (done) {
+        const elapsed = Date.now() - streamStartTime
+        proxyLogger.info('EventStream', 'Stream ended', {
+          elapsed,
+          chunkCount,
+          totalBytesReceived,
+          eventCount,
+          hasReceivedContent
+        })
+        if (!hasReceivedContent) {
+          proxyLogger.warn('EventStream', 'Stream completed but NO content was received! This may cause client timeout.', {
+            chunkCount,
+            totalBytesReceived,
+            eventCount
+          })
+        }
         break
+      }
+
+      chunkCount++
+      totalBytesReceived += value.length
+
+      // 每10个chunk或首个chunk打印日志
+      if (chunkCount === 1 || chunkCount % 10 === 0) {
+        proxyLogger.debug('EventStream', `Received chunk #${chunkCount}`, { size: value.length, totalBytes: totalBytesReceived })
       }
 
       // 合并缓冲区
@@ -651,11 +683,18 @@ async function parseEventStream(
             const payloadText = new TextDecoder().decode(payloadBytes)
             const event = JSON.parse(payloadText)
             
+            // 统计事件数量
+            eventCount++
+
             // 根据 event type 处理不同类型的事件
             if (eventType === 'assistantResponseEvent' || event.assistantResponseEvent) {
               const assistantResp = event.assistantResponseEvent || event
               const content = assistantResp.content
               if (content) {
+                if (!hasReceivedContent) {
+                  hasReceivedContent = true
+                  proxyLogger.debug('EventStream', 'First content received', { elapsed: Date.now() - streamStartTime })
+                }
                 onChunk(content)
                 // 累积输出字符长度
                 totalOutputChars += content.length
@@ -987,7 +1026,7 @@ async function parseEventStream(
         input: finalInput
       })
     }
-    
+
     // 如果 API 没有返回 token 信息，基于输出字符长度估算
     // Token 估算规则：约 4 个字符 = 1 token（对于英文），中文约 2 字符 = 1 token
     // 这里使用保守估计：平均 3 个字符 = 1 token
@@ -995,7 +1034,25 @@ async function parseEventStream(
       usage.outputTokens = Math.max(1, Math.round(totalOutputChars / 3))
       proxyLogger.info('Kiro', `Estimated output tokens: ${totalOutputChars} chars -> ${usage.outputTokens} tokens`)
     }
-    
+
+    // 诊断日志：流完成统计
+    const totalElapsed = Date.now() - streamStartTime
+    proxyLogger.info('EventStream', 'Calling onComplete', {
+      elapsed: totalElapsed,
+      outputChars: totalOutputChars,
+      eventCount,
+      hasContent: hasReceivedContent
+    })
+
+    // 警告：如果没有收到任何内容
+    if (!hasReceivedContent && totalOutputChars === 0) {
+      proxyLogger.error('EventStream', 'CRITICAL: No content received from Kiro API! Client will likely timeout.', {
+        chunkCount,
+        totalBytesReceived,
+        eventCount
+      })
+    }
+
     proxyLogger.info('Kiro', 'Stream complete, final usage', usage)
     onComplete(usage)
   } catch (error) {

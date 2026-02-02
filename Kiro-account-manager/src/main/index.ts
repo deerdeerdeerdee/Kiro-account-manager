@@ -1,4 +1,4 @@
-import { app, shell, BrowserWindow, ipcMain, dialog } from 'electron'
+import { app, shell, BrowserWindow, ipcMain, dialog, globalShortcut } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import * as machineIdModule from './machineId'
 import { join } from 'path'
@@ -8,7 +8,7 @@ import { encode, decode } from 'cbor-x'
 import icon from '../../resources/icon.png?asset'
 import { ProxyServer, type ProxyAccount, type ProxyConfig } from './proxy'
 import { fetchKiroModels, fetchSubscriptionToken, fetchAvailableSubscriptions } from './proxy/kiroApi'
-import { proxyLogStore } from './proxy/logger'
+import { proxyLogStore, proxyLogger } from './proxy/logger'
 import {
   createTray,
   destroyTray,
@@ -118,6 +118,15 @@ function initProxyServer(): ProxyServer {
 
   // 初始化日志存储
   proxyLogStore.initialize(app.getPath('userData'))
+
+  // 启用 proxyLogger 文件日志（用于排查问题）
+  proxyLogger.configure({
+    enabled: true,
+    logDir: join(app.getPath('userData'), 'logs', 'proxy'),
+    maxFileSize: 10 * 1024 * 1024, // 10MB
+    maxFiles: 5,
+    logToConsole: is.dev // 开发模式下同时输出到控制台
+  })
 
   // 从 store 加载保存的配置，如果没有则使用默认配置
   const savedConfig = store?.get('proxyConfig') as Partial<ProxyConfig> | undefined
@@ -1164,6 +1173,17 @@ app.whenReady().then(async () => {
   // see https://github.com/alex8088/electron-toolkit/tree/master/packages/utils
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)
+  })
+
+  // 注册全局快捷键：Ctrl+Shift+D 打开 DevTools（正式版也可用，用于调试）
+  globalShortcut.register('CommandOrControl+Shift+D', () => {
+    if (mainWindow) {
+      if (mainWindow.webContents.isDevToolsOpened()) {
+        mainWindow.webContents.closeDevTools()
+      } else {
+        mainWindow.webContents.openDevTools()
+      }
+    }
   })
 
   // IPC: 打开外部链接
@@ -4168,6 +4188,21 @@ app.whenReady().then(async () => {
   // IPC: 获取反代日志数量
   ipcMain.handle('proxy-get-logs-count', () => {
     return proxyLogStore.count()
+  })
+
+  // IPC: 打开日志目录
+  ipcMain.handle('proxy-open-log-dir', () => {
+    const logDir = proxyLogger.getLogDir()
+    if (logDir) {
+      shell.openPath(logDir)
+      return { success: true, path: logDir }
+    }
+    return { success: false, error: 'Log directory not configured' }
+  })
+
+  // IPC: 获取日志目录路径
+  ipcMain.handle('proxy-get-log-dir', () => {
+    return proxyLogger.getLogDir() || null
   })
 
   // IPC: 更新反代服务器配置

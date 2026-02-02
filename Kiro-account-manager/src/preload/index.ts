@@ -627,6 +627,16 @@ const api = {
     return ipcRenderer.invoke('proxy-get-logs-count')
   },
 
+  // 打开日志目录
+  proxyOpenLogDir: (): Promise<{ success: boolean; path?: string; error?: string }> => {
+    return ipcRenderer.invoke('proxy-open-log-dir')
+  },
+
+  // 获取日志目录路径
+  proxyGetLogDir: (): Promise<string | null> => {
+    return ipcRenderer.invoke('proxy-get-log-dir')
+  },
+
   // 更新反代服务器配置
   proxyUpdateConfig: (config: { port?: number; host?: string; apiKey?: string; enableMultiAccount?: boolean; selectedAccountIds?: string[]; logRequests?: boolean; autoStart?: boolean; maxRetries?: number; preferredEndpoint?: 'codewhisperer' | 'amazonq'; autoContinueRounds?: number; disableTools?: boolean }): Promise<{ success: boolean; config?: unknown; error?: string }> => {
     return ipcRenderer.invoke('proxy-update-config', config)

@@ -1129,12 +1129,13 @@ export class ProxyServer {
             const finalChunk = createOpenaiStreamChunk(id, model, {}, finishReason, usageInfo)
             res.write(`data: ${JSON.stringify(finalChunk)}\n\n`)
             res.write('data: [DONE]\n\n')
+            proxyLogger.info('ProxyServer', 'OpenAI stream completed', { contentLength: collectedContent.length })
             res.end()
             resolve()
           }
         },
         (error) => {
-          console.error('[ProxyServer] Stream error:', error)
+          proxyLogger.error('ProxyServer', 'OpenAI stream error', { error: error.message, contentCollected: collectedContent.length })
           res.write(`data: ${JSON.stringify({ error: { message: error.message } })}\n\n`)
           res.end()
 
@@ -1405,12 +1406,13 @@ export class ProxyServer {
             // 发送 message_stop
             const messageStop = createClaudeStreamEvent('message_stop')
             res.write(`event: message_stop\ndata: ${JSON.stringify(messageStop)}\n\n`)
+            proxyLogger.info('ProxyServer', 'Claude stream completed', { contentLength: collectedContent.length })
             res.end()
             resolve()
           }
         },
         (error) => {
-          console.error('[ProxyServer] Stream error:', error)
+          proxyLogger.error('ProxyServer', 'Claude stream error', { error: error.message, contentCollected: collectedContent.length })
           const errorEvent = createClaudeStreamEvent('error', {
             error: { type: 'api_error', message: error.message }
           })
