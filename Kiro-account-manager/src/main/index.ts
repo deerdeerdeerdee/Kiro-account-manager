@@ -2157,6 +2157,7 @@ app.whenReady().then(async () => {
               freeTrialExpiry?: string
               bonuses: Array<{ code: string; name: string; current: number; limit: number; expiresAt?: string }>
               nextResetDate?: string
+              usageUnknown?: boolean
             } | undefined
             let userInfoData: UserInfoResponse | undefined
             let subscriptionData: { type: string; title: string; daysRemaining?: number; expiresAt?: number } | undefined
