@@ -218,7 +218,7 @@ class ProxyLogger {
 // 内存日志存储（用于 UI 显示）
 class ProxyLogStore {
   private logs: LogEntry[] = []
-  private maxLogs: number = 1000000 // 最大保存条数（100万）
+  private maxLogs: number = 10000 // 最大保存条数（1万条，约 3-5MB）
   private listeners: ((entry: LogEntry) => void)[] = []
   private storePath: string = ''
 
