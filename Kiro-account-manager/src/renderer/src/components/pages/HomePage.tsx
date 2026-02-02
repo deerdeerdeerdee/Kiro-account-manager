@@ -284,9 +284,7 @@ export function HomePage() {
               <div className="space-y-1">
                 <p className="text-xs text-muted-foreground">{isEn ? 'Auth Method' : '登录方式'}</p>
                 <p className="text-sm font-medium">
-                  {activeAccount.credentials?.authMethod === 'social' 
-                    ? (activeAccount.credentials?.provider || 'Social')
-                    : 'Builder ID'}
+                  {activeAccount.idp || activeAccount.credentials?.provider || 'BuilderId'}
                 </p>
               </div>
             </div>
