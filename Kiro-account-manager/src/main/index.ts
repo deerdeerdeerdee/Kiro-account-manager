@@ -128,6 +128,66 @@ function initProxyServer(): ProxyServer {
     logToConsole: is.dev // 开发模式下同时输出到控制台
   })
 
+  // 实时日志推送配置
+  let realtimeLogsEnabled = false
+  let realtimeLogsLevel: 'DEBUG' | 'INFO' | 'WARN' | 'ERROR' = 'INFO'
+  let pendingLogs: Array<{ timestamp: string; level: string; category: string; message: string; data?: unknown }> = []
+  let batchTimer: NodeJS.Timeout | null = null
+  const BATCH_INTERVAL = 100 // 100ms 批量发送
+
+  // 批量发送日志到渲染进程
+  const flushLogs = (): void => {
+    if (pendingLogs.length > 0 && mainWindow) {
+      mainWindow.webContents.send('proxy-log-batch', pendingLogs)
+      pendingLogs = []
+    }
+    batchTimer = null
+  }
+
+  // 日志级别优先级
+  const levelPriority: Record<string, number> = {
+    'DEBUG': 0,
+    'INFO': 1,
+    'WARN': 2,
+    'ERROR': 3
+  }
+
+  // 监听新日志，批量推送到渲染进程
+  proxyLogStore.onLog((entry) => {
+    // 检查是否启用实时日志
+    if (!realtimeLogsEnabled) return
+
+    // 检查日志级别
+    const entryPriority = levelPriority[entry.level] ?? 0
+    const minPriority = levelPriority[realtimeLogsLevel] ?? 1
+    if (entryPriority < minPriority) return
+
+    // 添加到待发送队列
+    pendingLogs.push(entry)
+
+    // 设置批量发送定时器
+    if (!batchTimer) {
+      batchTimer = setTimeout(flushLogs, BATCH_INTERVAL)
+    }
+  })
+
+  // IPC: 设置实时日志开关
+  ipcMain.handle('proxy-set-realtime-logs', (_event, enabled: boolean, level?: 'DEBUG' | 'INFO' | 'WARN' | 'ERROR') => {
+    realtimeLogsEnabled = enabled
+    if (level) {
+      realtimeLogsLevel = level
+    }
+    // 关闭时清空待发送队列
+    if (!enabled) {
+      pendingLogs = []
+      if (batchTimer) {
+        clearTimeout(batchTimer)
+        batchTimer = null
+      }
+    }
+    return { success: true, enabled: realtimeLogsEnabled, level: realtimeLogsLevel }
+  })
+
   // 从 store 加载保存的配置，如果没有则使用默认配置
   const savedConfig = store?.get('proxyConfig') as Partial<ProxyConfig> | undefined
   // 从 store 加载保存的累计 credits 和 tokens

@@ -7,6 +7,7 @@ import { ProxyLogsDialog } from './ProxyLogsDialog'
 import { ProxyDetailedLogsDialog } from './ProxyDetailedLogsDialog'
 import { ModelsDialog } from './ModelsDialog'
 import { AccountSelectDialog } from './AccountSelectDialog'
+import { ProxyRealtimeLogs } from './ProxyRealtimeLogs'
 
 interface ProxyStats {
   totalRequests: number
@@ -796,6 +797,11 @@ export function ProxyPanel() {
             </CardContent>
           </Card>
         </div>
+      )}
+
+      {/* 实时日志面板 */}
+      {isRunning && (
+        <ProxyRealtimeLogs isRunning={isRunning} isEn={isEn} />
       )}
 
       {/* API 端点说明 */}

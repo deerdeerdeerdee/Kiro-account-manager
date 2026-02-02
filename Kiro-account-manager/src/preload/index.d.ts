@@ -628,6 +628,15 @@ interface KiroApi {
   // 监听反代状态变化事件
   onProxyStatusChange: (callback: (status: { running: boolean; port: number }) => void) => () => void
 
+  // 监听反代实时日志事件
+  onProxyLogEntry: (callback: (entry: { timestamp: string; level: string; category: string; message: string; data?: unknown }) => void) => () => void
+
+  // 监听反代批量日志事件（优化性能）
+  onProxyLogBatch: (callback: (entries: Array<{ timestamp: string; level: string; category: string; message: string; data?: unknown }>) => void) => () => void
+
+  // 设置实时日志开关
+  proxySetRealtimeLogs: (enabled: boolean, level?: 'DEBUG' | 'INFO' | 'WARN' | 'ERROR') => Promise<{ success: boolean; enabled: boolean; level: string }>
+
   // ============ 托盘相关 API ============
 
   // 获取托盘设置

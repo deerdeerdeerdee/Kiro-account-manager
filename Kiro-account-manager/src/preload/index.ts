@@ -761,6 +761,33 @@ const api = {
     }
   },
 
+  // 监听反代实时日志事件
+  onProxyLogEntry: (callback: (entry: { timestamp: string; level: string; category: string; message: string; data?: unknown }) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, entry: { timestamp: string; level: string; category: string; message: string; data?: unknown }): void => {
+      callback(entry)
+    }
+    ipcRenderer.on('proxy-log-entry', handler)
+    return () => {
+      ipcRenderer.removeListener('proxy-log-entry', handler)
+    }
+  },
+
+  // 监听反代批量日志事件（优化性能）
+  onProxyLogBatch: (callback: (entries: Array<{ timestamp: string; level: string; category: string; message: string; data?: unknown }>) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, entries: Array<{ timestamp: string; level: string; category: string; message: string; data?: unknown }>): void => {
+      callback(entries)
+    }
+    ipcRenderer.on('proxy-log-batch', handler)
+    return () => {
+      ipcRenderer.removeListener('proxy-log-batch', handler)
+    }
+  },
+
+  // 设置实时日志开关
+  proxySetRealtimeLogs: (enabled: boolean, level?: 'DEBUG' | 'INFO' | 'WARN' | 'ERROR'): Promise<{ success: boolean; enabled: boolean; level: string }> => {
+    return ipcRenderer.invoke('proxy-set-realtime-logs', enabled, level)
+  },
+
   // ============ 托盘相关 API ============
 
   // 获取托盘设置
