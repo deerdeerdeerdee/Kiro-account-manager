@@ -1054,7 +1054,7 @@ async function parseEventStream(
     }
 
     proxyLogger.info('Kiro', 'Stream complete, final usage', usage)
-    onComplete(usage)
+    await onComplete(usage)
   } catch (error) {
     onError(error as Error)
   } finally {
