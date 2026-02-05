@@ -274,11 +274,15 @@ export const AccountCard = memo(function AccountCard({
   const isHighUsage = account.usage.percentUsed > 80
 
   // 检测账号是否被封禁/暂停（多种错误格式）
-  const isUnauthorized = account.lastError?.includes('UnauthorizedException') || 
+  // 注意：用量未知的账号（特殊 Enterprise）不应被判定为封禁
+  const isUsageUnknown = account.usage.usageUnknown || account.usage.limit >= 999999 || account.unlimitedUsage
+  const isUnauthorized = !isUsageUnknown && (
+                         account.lastError?.includes('UnauthorizedException') ||
                          account.lastError?.includes('AccountSuspendedException') ||
                          account.lastError?.includes('账户已封禁') ||
                          account.lastError?.includes('HTTP 403') ||
                          account.lastError?.includes('HTTP 423')
+                         )
   
   // 封禁详情弹窗状态
   const [showBanDialog, setShowBanDialog] = useState(false)
@@ -541,29 +545,42 @@ export const AccountCard = memo(function AccountCard({
         <div className="bg-muted/30 p-3 rounded-lg space-y-2 border border-border/50">
             <div className="flex justify-between items-end text-xs">
                 <span className="text-muted-foreground font-medium">{isEn ? 'Usage' : '使用量'}</span>
-                <span className={cn("font-mono font-medium", isHighUsage ? "text-amber-600" : "text-foreground")}>
-                   {(account.usage.percentUsed * 100).toFixed(usagePrecision ? 2 : 0)}%
-                </span>
-            </div>
-            <Progress
-              value={account.usage.percentUsed * 100}
-              className="h-1.5"
-              indicatorClassName={isHighUsage ? "bg-amber-500" : "bg-primary"}
-            />
-            <div className="flex justify-between text-[10px] text-muted-foreground pt-0.5">
-                <span>{formatUsage(account.usage.current)} / {formatUsage(account.usage.limit)}</span>
-                {account.usage.nextResetDate && (
-                  <span className="flex items-center gap-1">
-                    <Calendar className="h-3 w-3" />
-                     {(() => {
-                      const d = account.usage.nextResetDate as unknown
-                      try {
-                         return (typeof d === 'string' ? d : new Date(d as Date).toISOString()).split('T')[0]
-                      } catch { return 'Unknown' }
-                    })()} {isEn ? 'reset' : '重置'}
+                {isUsageUnknown ? (
+                  <span className="font-mono font-medium text-purple-600 dark:text-purple-400">∞</span>
+                ) : (
+                  <span className={cn("font-mono font-medium", isHighUsage ? "text-amber-600" : "text-foreground")}>
+                     {(account.usage.percentUsed * 100).toFixed(usagePrecision ? 2 : 0)}%
                   </span>
                 )}
             </div>
+            {isUsageUnknown ? (
+              <div className="text-[10px] text-purple-600 dark:text-purple-400 flex items-center gap-1">
+                <Info className="h-3 w-3" />
+                {isEn ? 'Usage info unavailable (special Enterprise account)' : '用量信息不可用（特殊企业账号）'}
+              </div>
+            ) : (
+              <>
+                <Progress
+                  value={account.usage.percentUsed * 100}
+                  className="h-1.5"
+                  indicatorClassName={isHighUsage ? "bg-amber-500" : "bg-primary"}
+                />
+                <div className="flex justify-between text-[10px] text-muted-foreground pt-0.5">
+                    <span>{formatUsage(account.usage.current)} / {formatUsage(account.usage.limit)}</span>
+                    {account.usage.nextResetDate && (
+                      <span className="flex items-center gap-1">
+                        <Calendar className="h-3 w-3" />
+                         {(() => {
+                          const d = account.usage.nextResetDate as unknown
+                          try {
+                             return (typeof d === 'string' ? d : new Date(d as Date).toISOString()).split('T')[0]
+                          } catch { return 'Unknown' }
+                        })()} {isEn ? 'reset' : '重置'}
+                      </span>
+                    )}
+                </div>
+              </>
+            )}
         </div>
 
         {/* Detailed Quotas - Compact list */}

@@ -52,6 +52,7 @@ export interface AccountUsage {
   bonuses?: BonusUsage[]  // 奖励额度列表
   nextResetDate?: string  // 重置日期
   resourceDetail?: ResourceDetail // 资源详情
+  usageUnknown?: boolean  // 标记用量信息是否未知（特殊 Enterprise 账号）
 }
 
 /**
@@ -121,6 +122,9 @@ export interface Account {
   status: AccountStatus
   lastError?: string
   isActive: boolean // 是否为当前激活账号
+
+  // 特殊标记
+  unlimitedUsage?: boolean // 手动标记为无限用量账号（特殊 Enterprise 账号）
 
   // 时间戳
   createdAt: number

@@ -31,7 +31,7 @@ interface VerifiedData {
     upgradeCapability?: string
     overageCapability?: string
   }
-  usage: { 
+  usage: {
     current: number
     limit: number
     baseLimit?: number
@@ -51,6 +51,7 @@ interface VerifiedData {
       overageCap?: number
       overageEnabled?: boolean
     }
+    usageUnknown?: boolean
   }
   daysRemaining?: number
   expiresAt?: number
@@ -238,8 +239,8 @@ export function AddAccountDialog({ isOpen, onClose }: AddAccountDialogProps): Re
           usage: {
             current: result.data.usage.current,
             limit: result.data.usage.limit,
-            percentUsed: result.data.usage.limit > 0 
-              ? result.data.usage.current / result.data.usage.limit 
+            percentUsed: result.data.usage.limit > 0
+              ? result.data.usage.current / result.data.usage.limit
               : 0,
             lastUpdated: now,
             baseLimit: result.data.usage.baseLimit,
@@ -249,7 +250,8 @@ export function AddAccountDialog({ isOpen, onClose }: AddAccountDialogProps): Re
             freeTrialExpiry: result.data.usage.freeTrialExpiry,
             bonuses: result.data.usage.bonuses,
             nextResetDate: result.data.usage.nextResetDate,
-            resourceDetail: result.data.usage.resourceDetail
+            resourceDetail: result.data.usage.resourceDetail,
+            usageUnknown: result.data.usage.usageUnknown
           },
           groupId: undefined,
           tags: [],
@@ -883,8 +885,8 @@ export function AddAccountDialog({ isOpen, onClose }: AddAccountDialogProps): Re
           usage: {
             current: result.data.usage.current,
             limit: result.data.usage.limit,
-            percentUsed: result.data.usage.limit > 0 
-              ? result.data.usage.current / result.data.usage.limit 
+            percentUsed: result.data.usage.limit > 0
+              ? result.data.usage.current / result.data.usage.limit
               : 0,
             lastUpdated: now,
             baseLimit: result.data.usage.baseLimit,
@@ -894,7 +896,8 @@ export function AddAccountDialog({ isOpen, onClose }: AddAccountDialogProps): Re
             freeTrialExpiry: result.data.usage.freeTrialExpiry,
             bonuses: result.data.usage.bonuses,
             nextResetDate: result.data.usage.nextResetDate,
-            resourceDetail: result.data.usage.resourceDetail
+            resourceDetail: result.data.usage.resourceDetail,
+            usageUnknown: result.data.usage.usageUnknown
           },
           groupId: undefined,
           tags: [],

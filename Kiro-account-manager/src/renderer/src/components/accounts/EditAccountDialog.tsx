@@ -36,7 +36,7 @@ export function EditAccountDialog({
     accessToken: string
     subscriptionType: string
     subscriptionTitle: string
-    usage: { 
+    usage: {
       current: number
       limit: number
       baseLimit?: number
@@ -46,6 +46,7 @@ export function EditAccountDialog({
       freeTrialExpiry?: string
       bonuses?: { code: string; name: string; current: number; limit: number; expiresAt?: string }[]
       nextResetDate?: string
+      usageUnknown?: boolean
     }
     daysRemaining?: number
     expiresAt?: number
@@ -188,8 +189,8 @@ export function EditAccountDialog({
       usage: {
         current: accountInfo.usage.current,
         limit: accountInfo.usage.limit,
-        percentUsed: accountInfo.usage.limit > 0 
-          ? accountInfo.usage.current / accountInfo.usage.limit 
+        percentUsed: accountInfo.usage.limit > 0
+          ? accountInfo.usage.current / accountInfo.usage.limit
           : 0,
         lastUpdated: now,
         baseLimit: accountInfo.usage.baseLimit,
@@ -198,7 +199,8 @@ export function EditAccountDialog({
         freeTrialCurrent: accountInfo.usage.freeTrialCurrent,
         freeTrialExpiry: accountInfo.usage.freeTrialExpiry,
         bonuses: accountInfo.usage.bonuses,
-        nextResetDate: accountInfo.usage.nextResetDate
+        nextResetDate: accountInfo.usage.nextResetDate,
+        usageUnknown: accountInfo.usage.usageUnknown
       },
       status: 'active'
     })

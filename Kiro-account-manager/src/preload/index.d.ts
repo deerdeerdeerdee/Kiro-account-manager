@@ -205,7 +205,7 @@ interface KiroApi {
         upgradeCapability?: string
         overageCapability?: string
       }
-      usage: { 
+      usage: {
         current: number
         limit: number
         baseLimit?: number
@@ -225,6 +225,7 @@ interface KiroApi {
           overageCap?: number
           overageEnabled?: boolean
         }
+        usageUnknown?: boolean
       }
       daysRemaining?: number
       expiresAt?: number

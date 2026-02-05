@@ -2056,7 +2056,7 @@ app.whenReady().then(async () => {
       accessToken: string
       refreshToken?: string
       expiresIn?: number
-    }, userInfo?: UserInfoResponse) => {
+    }, userInfo?: UserInfoResponse, usageUnknown?: boolean) => {
       console.log('GetUserUsageAndLimits response:', JSON.stringify(result, null, 2))
 
       // 解析 Credits 使用量（resourceType 为 CREDIT）
@@ -2065,9 +2065,9 @@ app.whenReady().then(async () => {
       )
 
       // 解析使用量（详细，使用精确小数）
-      // 基础额度
-      const baseLimit = creditUsage?.usageLimitWithPrecision ?? creditUsage?.usageLimit ?? 0
-      const baseCurrent = creditUsage?.currentUsageWithPrecision ?? creditUsage?.currentUsage ?? 0
+      // 基础额度（用量未知时设置为无限）
+      const baseLimit = usageUnknown ? 999999 : (creditUsage?.usageLimitWithPrecision ?? creditUsage?.usageLimit ?? 0)
+      const baseCurrent = usageUnknown ? 0 : (creditUsage?.currentUsageWithPrecision ?? creditUsage?.currentUsage ?? 0)
       
       // 试用额度
       let freeTrialLimit = 0
@@ -2154,7 +2154,8 @@ app.whenReady().then(async () => {
             freeTrialExpiry,
             bonuses: bonusesData,
             nextResetDate,
-            resourceDetail
+            resourceDetail,
+            usageUnknown
           },
           subscription: {
             type: subscriptionType,
@@ -2170,8 +2171,8 @@ app.whenReady().then(async () => {
           newCredentials: newCredentials ? {
             accessToken: newCredentials.accessToken,
             refreshToken: newCredentials.refreshToken,
-            expiresAt: newCredentials.expiresIn 
-              ? Date.now() + newCredentials.expiresIn * 1000 
+            expiresAt: newCredentials.expiresIn
+              ? Date.now() + newCredentials.expiresIn * 1000
               : undefined
           } : undefined
         }
@@ -2209,22 +2210,43 @@ app.whenReady().then(async () => {
         return parseUsageResponse(usageResult, undefined, userInfoResult)
       } catch (apiError) {
         const errorMsg = apiError instanceof Error ? apiError.message : ''
-        
-        // 检查是否是封禁错误（403、423 或 AccountSuspendedException）
-        if (errorMsg.includes('AccountSuspendedException') || errorMsg.includes('423') || errorMsg.includes('403')) {
+
+        // 检查账号是否已标记为特殊 Enterprise 账号（无法获取用量信息）
+        const isSpecialEnterprise = account.unlimitedUsage === true ||
+                                    account.usage?.usageUnknown === true ||
+                                    (account.usage?.limit && account.usage.limit >= 999999)
+
+        // 检查是否是封禁错误（423 或 AccountSuspendedException）
+        if (errorMsg.includes('AccountSuspendedException') || errorMsg.includes('423')) {
           console.log('[IPC] Account suspended/banned')
           return {
             success: false,
             error: { message: errorMsg, isBanned: true }
           }
         }
-        
-        // 检查是否是 401 错误（token 过期）
+
+        // 检查是否是 403 错误
+        if (errorMsg.includes('403')) {
+          // 只有已标记的特殊 Enterprise 账号才返回 usageUnknown，普通账号仍视为封禁
+          if (isSpecialEnterprise) {
+            console.log('[IPC] HTTP 403 - special Enterprise account, treating as usage unknown')
+            return parseUsageResponse({}, undefined, undefined, true) // usageUnknown = true
+          } else {
+            console.log('[IPC] HTTP 403 - normal account, treating as banned')
+            return {
+              success: false,
+              error: { message: errorMsg, isBanned: true }
+            }
+          }
+        }
+
+        // 检查是否是认证错误（401 或 UnauthorizedException）
+        const isAuthError = errorMsg.includes('401') || errorMsg.includes('UnauthorizedException')
         // 社交登录只需要 refreshToken，IdC 登录需要 clientId 和 clientSecret
         const canRefresh = refreshToken && (authMethod === 'social' || (clientId && clientSecret))
-        if (errorMsg.includes('401') && canRefresh) {
+        if (isAuthError && canRefresh) {
           console.log(`[IPC] Token expired, attempting to refresh (authMethod: ${authMethod || 'IdC'})...`)
-          
+
           // 尝试刷新 token - 根据 authMethod 选择刷新方式
           const refreshResult = await refreshTokenByMethod(
             refreshToken,
@@ -2236,19 +2258,55 @@ app.whenReady().then(async () => {
           
           if (refreshResult.success && refreshResult.accessToken) {
             console.log('[IPC] Token refreshed, retrying API call...')
-            
+
             // 用新 token 并行调用 GetUserInfo 和 getUsageAndLimits
-            const [userInfoResult, usageResult] = await Promise.all([
-              getUserInfo(refreshResult.accessToken, idp, accountMachineId).catch(() => undefined),
-              getUsageAndLimits(refreshResult.accessToken, idp, undefined, accountMachineId)
-            ])
-            
-            // 返回结果并包含新凭证
-            return parseUsageResponse(usageResult, {
-              accessToken: refreshResult.accessToken,
-              refreshToken: refreshResult.refreshToken,
-              expiresIn: refreshResult.expiresIn
-            }, userInfoResult)
+            try {
+              const [userInfoResult, usageResult] = await Promise.all([
+                getUserInfo(refreshResult.accessToken, idp, accountMachineId).catch(() => undefined),
+                getUsageAndLimits(refreshResult.accessToken, idp, undefined, accountMachineId)
+              ])
+
+              // 返回结果并包含新凭证
+              return parseUsageResponse(usageResult, {
+                accessToken: refreshResult.accessToken,
+                refreshToken: refreshResult.refreshToken,
+                expiresIn: refreshResult.expiresIn
+              }, userInfoResult)
+            } catch (retryError) {
+              const retryErrMsg = retryError instanceof Error ? retryError.message : ''
+              // 检查是否是封禁错误（423 或 AccountSuspendedException）
+              if (retryErrMsg.includes('AccountSuspendedException') || retryErrMsg.includes('423')) {
+                return {
+                  success: false,
+                  error: { message: retryErrMsg, isBanned: true }
+                }
+              }
+              // 检查是否是 403 错误
+              if (retryErrMsg.includes('403')) {
+                // 只有已标记的特殊 Enterprise 账号才返回 usageUnknown，普通账号仍视为封禁
+                if (isSpecialEnterprise) {
+                  console.warn('[IPC] HTTP 403 after token refresh - special Enterprise account, returning fallback result')
+                  return parseUsageResponse({}, {
+                    accessToken: refreshResult.accessToken,
+                    refreshToken: refreshResult.refreshToken,
+                    expiresIn: refreshResult.expiresIn
+                  }, undefined, true) // usageUnknown = true
+                } else {
+                  console.log('[IPC] HTTP 403 after token refresh - normal account, treating as banned')
+                  return {
+                    success: false,
+                    error: { message: retryErrMsg, isBanned: true }
+                  }
+                }
+              }
+              // 其他错误，返回容错结果
+              console.warn('[IPC] API failed after token refresh, returning fallback result:', retryErrMsg)
+              return parseUsageResponse({}, {
+                accessToken: refreshResult.accessToken,
+                refreshToken: refreshResult.refreshToken,
+                expiresIn: refreshResult.expiresIn
+              }, undefined, true) // usageUnknown = true
+            }
           } else {
             console.error('[IPC] Token refresh failed:', refreshResult.error)
             return {
@@ -2257,8 +2315,14 @@ app.whenReady().then(async () => {
             }
           }
         }
-        
-        // 不是 401 或没有刷新凭证，抛出原错误
+
+        // 认证错误但无法刷新 Token，返回容错结果
+        if (isAuthError) {
+          console.warn('[IPC] Auth error but cannot refresh token, returning fallback result')
+          return parseUsageResponse({}, undefined, undefined, true) // usageUnknown = true
+        }
+
+        // 不是认证错误，抛出原错误
         throw apiError
       }
     } catch (error) {
@@ -2284,6 +2348,12 @@ app.whenReady().then(async () => {
       authMethod?: string
       accessToken?: string
       provider?: string
+    }
+    // 用于判断是否为特殊 Enterprise 账号
+    unlimitedUsage?: boolean
+    usage?: {
+      limit?: number
+      usageUnknown?: boolean
     }
   }>, concurrency: number = 10, syncInfo: boolean = true) => {
     console.log(`[BackgroundRefresh] Starting batch refresh for ${accounts.length} accounts, concurrency: ${concurrency}, syncInfo: ${syncInfo}`)
@@ -2366,6 +2436,7 @@ app.whenReady().then(async () => {
               freeTrialExpiry?: string
               bonuses: Array<{ code: string; name: string; current: number; limit: number; expiresAt?: string }>
               nextResetDate?: string
+              usageUnknown?: boolean
             } | undefined
             let userInfoData: UserInfoResponse | undefined
             let subscriptionData: { type: string; title: string; daysRemaining?: number; expiresAt?: number } | undefined
@@ -2480,9 +2551,54 @@ app.whenReady().then(async () => {
               } catch (apiError) {
                 const errMsg = apiError instanceof Error ? apiError.message : String(apiError)
                 console.log(`[BackgroundRefresh] Usage API error for ${account.id}:`, errMsg)
+
+                // 检查账号是否已标记为特殊 Enterprise 账号
+                const isSpecialEnterprise = account.unlimitedUsage === true ||
+                                            account.usage?.usageUnknown === true ||
+                                            (account.usage?.limit && account.usage.limit >= 999999)
+
+                // 封禁错误：对所有账号都视为封禁
                 if (errMsg.includes('AccountSuspendedException') || errMsg.includes('423')) {
                   status = 'error'
                   errorMessage = errMsg
+                }
+                // 403 错误：根据账号类型区分处理
+                else if (errMsg.includes('403')) {
+                  if (isSpecialEnterprise) {
+                    // 特殊账号：视为 usageUnknown
+                    console.warn(`[BackgroundRefresh] Special Enterprise account ${account.id} got 403, setting usageUnknown`)
+                    parsedUsage = {
+                      current: 0,
+                      limit: 999999,
+                      baseCurrent: 0,
+                      baseLimit: 999999,
+                      freeTrialCurrent: 0,
+                      freeTrialLimit: 0,
+                      bonuses: [],
+                      usageUnknown: true
+                    }
+                    subscriptionData = { type: 'Enterprise', title: 'Enterprise' }
+                  } else {
+                    // 普通账号：视为封禁
+                    console.warn(`[BackgroundRefresh] Normal account ${account.id} got 403, marking as banned`)
+                    status = 'error'
+                    errorMessage = errMsg
+                  }
+                }
+                // 其他错误：视为 usageUnknown（临时性错误）
+                else {
+                  console.warn(`[BackgroundRefresh] Setting usageUnknown for ${account.id} due to API error`)
+                  parsedUsage = {
+                    current: 0,
+                    limit: 999999,
+                    baseCurrent: 0,
+                    baseLimit: 999999,
+                    freeTrialCurrent: 0,
+                    freeTrialLimit: 0,
+                    bonuses: [],
+                    usageUnknown: true
+                  }
+                  subscriptionData = { type: 'Enterprise', title: 'Enterprise' }
                 }
               }
 
@@ -2899,7 +3015,7 @@ app.whenReady().then(async () => {
       }
       
       console.log('[Verify] Step 2: Getting user info...')
-      
+
       // Step 2: 调用 GetUserUsageAndLimits 获取用户信息
       interface Bonus {
         bonusCode?: string
@@ -2911,7 +3027,7 @@ app.whenReady().then(async () => {
         status?: string
         expiresAt?: string  // API 返回的是 expiresAt
       }
-      
+
       interface FreeTrialInfo {
         usageLimit?: number
         usageLimitWithPrecision?: number
@@ -2920,7 +3036,7 @@ app.whenReady().then(async () => {
         freeTrialStatus?: string
         freeTrialExpiry?: string
       }
-      
+
       interface UsageBreakdown {
         usageLimit?: number
         usageLimitWithPrecision?: number
@@ -2936,11 +3052,11 @@ app.whenReady().then(async () => {
         bonuses?: Bonus[]
         freeTrialInfo?: FreeTrialInfo
       }
-      
+
       interface UsageResponse {
         nextDateReset?: string
         usageBreakdownList?: UsageBreakdown[]
-        subscriptionInfo?: { 
+        subscriptionInfo?: {
           subscriptionTitle?: string
           type?: string
           subscriptionManagementTarget?: string
@@ -2950,16 +3066,51 @@ app.whenReady().then(async () => {
         overageConfiguration?: { overageEnabled?: boolean }
         userInfo?: { email?: string; userId?: string }
       }
-      
-      const usageResult = await getUsageAndLimits(refreshResult.accessToken, idp) as UsageResponse
-      
+
+      // 尝试获取用量信息，失败时不阻断流程（特殊 Enterprise 账号可能无法获取用量）
+      let usageResult: UsageResponse = {}
+      let usageUnknown = false
+
+      try {
+        usageResult = await getUsageAndLimits(refreshResult.accessToken, idp) as UsageResponse
+      } catch (usageError) {
+        const errMsg = usageError instanceof Error ? usageError.message : String(usageError)
+        console.warn('[Verify] GetUserUsageAndLimits failed:', errMsg)
+
+        // 封禁错误：阻断导入流程
+        if (errMsg.includes('AccountSuspendedException') || errMsg.includes('423')) {
+          throw new Error(`账户已被封禁: ${errMsg}`)
+        }
+
+        // 403 错误：通过 GetUserInfo 是否成功来区分
+        if (errMsg.includes('403')) {
+          // 尝试调用 GetUserInfo 来验证账号是否有效
+          try {
+            const userInfoResult = await getUserInfo(refreshResult.accessToken, idp)
+            if (userInfoResult) {
+              // GetUserInfo 成功 → 特殊 Enterprise 账号（用量接口不可用）
+              console.warn('[Verify] HTTP 403 on usage API but GetUserInfo succeeded - special Enterprise account')
+              usageUnknown = true
+            }
+          } catch (userInfoError) {
+            // GetUserInfo 也失败 → 可能是封禁
+            const userInfoErrMsg = userInfoError instanceof Error ? userInfoError.message : String(userInfoError)
+            throw new Error(`无法获取账户信息，可能已被封禁: ${userInfoErrMsg}`)
+          }
+        } else {
+          // 其他错误：视为 usageUnknown（临时性错误）
+          console.warn('[Verify] Setting usageUnknown due to API error (may be special Enterprise account)')
+          usageUnknown = true
+        }
+      }
+
       // 解析用户信息
       const email = usageResult.userInfo?.email || ''
       const userId = usageResult.userInfo?.userId || ''
-      
+
       // 解析订阅类型（注意检查顺序：先检查更具体的类型）
-      const subscriptionTitle = usageResult.subscriptionInfo?.subscriptionTitle || 'Free'
-      let subscriptionType = 'Free'
+      const subscriptionTitle = usageResult.subscriptionInfo?.subscriptionTitle || (usageUnknown ? 'Enterprise' : 'Free')
+      let subscriptionType = usageUnknown ? 'Enterprise' : 'Free'
       const titleUpper = subscriptionTitle.toUpperCase()
       if (titleUpper.includes('PRO+') || titleUpper.includes('PRO_PLUS') || titleUpper.includes('PROPLUS')) {
         subscriptionType = 'Pro_Plus'
@@ -2975,10 +3126,10 @@ app.whenReady().then(async () => {
       
       // 解析使用量（详细，使用精确小数）
       const creditUsage = usageResult.usageBreakdownList?.find(b => b.resourceType === 'CREDIT')
-      
-      // 基础额度
-      const baseLimit = creditUsage?.usageLimitWithPrecision ?? creditUsage?.usageLimit ?? 0
-      const baseCurrent = creditUsage?.currentUsageWithPrecision ?? creditUsage?.currentUsage ?? 0
+
+      // 基础额度（用量未知时设置为无限）
+      const baseLimit = usageUnknown ? 999999 : (creditUsage?.usageLimitWithPrecision ?? creditUsage?.usageLimit ?? 0)
+      const baseCurrent = usageUnknown ? 0 : (creditUsage?.currentUsageWithPrecision ?? creditUsage?.currentUsage ?? 0)
       
       // 试用额度
       let freeTrialLimit = 0
@@ -3019,8 +3170,8 @@ app.whenReady().then(async () => {
         daysRemaining = Math.max(0, Math.ceil((expiresAt - Date.now()) / (1000 * 60 * 60 * 24)))
       }
       
-      console.log('[Verify] Success! Email:', email)
-      
+      console.log('[Verify] Success! Email:', email, usageUnknown ? '(usage unknown)' : '')
+
       return {
         success: true,
         data: {
@@ -3047,6 +3198,7 @@ app.whenReady().then(async () => {
             freeTrialExpiry,
             bonuses,
             nextResetDate,
+            usageUnknown,
             resourceDetail: creditUsage ? {
               displayName: creditUsage.displayName,
               displayNamePlural: creditUsage.displayNamePlural,

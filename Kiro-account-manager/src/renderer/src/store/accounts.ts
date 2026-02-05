@@ -1694,7 +1694,7 @@ export const useAccountsStore = create<AccountsStore>()((set, get) => ({
   checkAndAutoSwitch: async () => {
     const { accounts, autoSwitchThreshold, checkAccountStatus, setActiveAccount } = get()
     const activeAccount = get().getActiveAccount()
-    
+
     if (!activeAccount) {
       console.log('[AutoSwitch] No active account')
       return
@@ -1702,12 +1702,24 @@ export const useAccountsStore = create<AccountsStore>()((set, get) => ({
 
     console.log(`[AutoSwitch] Checking active account: ${activeAccount.email}`)
 
+    // 用量未知的账号跳过检查（特殊 Enterprise 账号）
+    if (activeAccount.usage.usageUnknown || activeAccount.usage.limit >= 999999 || activeAccount.unlimitedUsage) {
+      console.log(`[AutoSwitch] Skipping ${activeAccount.email} (usage unknown or unlimited)`)
+      return
+    }
+
     // 刷新当前账号状态获取最新余额
     await checkAccountStatus(activeAccount.id)
-    
+
     // 重新获取更新后的账号信息
     const updatedAccount = get().accounts.get(activeAccount.id)
     if (!updatedAccount) return
+
+    // 用量未知的账号跳过检查
+    if (updatedAccount.usage.usageUnknown || updatedAccount.usage.limit >= 999999 || updatedAccount.unlimitedUsage) {
+      console.log(`[AutoSwitch] Skipping ${updatedAccount.email} after refresh (usage unknown or unlimited)`)
+      return
+    }
 
     const remaining = updatedAccount.usage.limit - updatedAccount.usage.current
     console.log(`[AutoSwitch] Remaining: ${remaining}, Threshold: ${autoSwitchThreshold}`)
@@ -1715,14 +1727,16 @@ export const useAccountsStore = create<AccountsStore>()((set, get) => ({
     // 检查是否需要切换
     if (remaining <= autoSwitchThreshold) {
       console.log(`[AutoSwitch] Account ${updatedAccount.email} reached threshold, switching...`)
-      
+
       // 查找可用的账号
       const availableAccount = Array.from(accounts.values()).find(acc => {
         // 排除当前账号
         if (acc.id === activeAccount.id) return false
         // 排除被封禁的账号
-        if (acc.lastError?.includes('UnauthorizedException') || 
+        if (acc.lastError?.includes('UnauthorizedException') ||
             acc.lastError?.includes('AccountSuspendedException')) return false
+        // 用量未知或无限用量的账号可用
+        if (acc.usage.usageUnknown || acc.usage.limit >= 999999 || acc.unlimitedUsage) return true
         // 排除余额不足的账号
         const accRemaining = acc.usage.limit - acc.usage.current
         if (accRemaining <= autoSwitchThreshold) return false
@@ -2017,6 +2031,7 @@ export const useAccountsStore = create<AccountsStore>()((set, get) => ({
           freeTrialExpiry?: string
           bonuses?: Array<{ code: string; name: string; current: number; limit: number; expiresAt?: string }>
           nextResetDate?: string
+          usageUnknown?: boolean
         }
         subscription?: { type?: string; title?: string; daysRemaining?: number; expiresAt?: number }
         userInfo?: { email?: string; userId?: string }
@@ -2051,6 +2066,7 @@ export const useAccountsStore = create<AccountsStore>()((set, get) => ({
             freeTrialExpiry: refreshData.usage.freeTrialExpiry ?? account.usage.freeTrialExpiry,
             bonuses: refreshData.usage.bonuses ?? account.usage.bonuses,
             nextResetDate: refreshData.usage.nextResetDate ?? account.usage.nextResetDate,
+            usageUnknown: refreshData.usage.usageUnknown ?? account.usage.usageUnknown,
             lastUpdated: now
           }
         })() : account.usage,
