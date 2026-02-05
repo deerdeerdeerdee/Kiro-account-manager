@@ -1604,7 +1604,14 @@ app.whenReady().then(async () => {
   // and ignore CommandOrControl + R in production.
   // see https://github.com/alex8088/electron-toolkit/tree/master/packages/utils
   app.on('browser-window-created', (_, window) => {
-    optimizer.watchWindowShortcuts(window)
+    optimizer.watchWindowShortcuts(window, { escToCloseWindow: false })
+    // 生产环境也允许 F12 打开 DevTools（方便调试）
+    window.webContents.on('before-input-event', (event, input) => {
+      if (input.key === 'F12') {
+        window.webContents.toggleDevTools()
+        event.preventDefault()
+      }
+    })
   })
 
   // IPC: 打开外部链接
