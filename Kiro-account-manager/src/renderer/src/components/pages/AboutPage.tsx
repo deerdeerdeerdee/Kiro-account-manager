@@ -32,6 +32,10 @@ export function AboutPage() {
   const [isCheckingUpdate, setIsCheckingUpdate] = useState(false)
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null)
   const [showUpdateModal, setShowUpdateModal] = useState(false)
+  // Fork 仓库更新检查状态
+  const [isCheckingForkUpdate, setIsCheckingForkUpdate] = useState(false)
+  const [forkUpdateInfo, setForkUpdateInfo] = useState<UpdateInfo | null>(null)
+  const [showForkUpdateModal, setShowForkUpdateModal] = useState(false)
   const { darkMode } = useAccountsStore()
   const { t } = useTranslation()
   const isEn = t('common.unknown') === 'Unknown'
@@ -54,6 +58,20 @@ export function AboutPage() {
       console.error('Check update failed:', error)
     } finally {
       setIsCheckingUpdate(false)
+    }
+  }
+
+  // 检查个人 fork 仓库更新
+  const checkForkRepoUpdates = async () => {
+    setIsCheckingForkUpdate(true)
+    try {
+      const result = await window.api.checkForkRepoUpdates()
+      setForkUpdateInfo(result)
+      setShowForkUpdateModal(true)
+    } catch (error) {
+      console.error('Check fork repo update failed:', error)
+    } finally {
+      setIsCheckingForkUpdate(false)
     }
   }
 
@@ -86,6 +104,18 @@ export function AboutPage() {
             <p className="text-muted-foreground">{isEn ? `Version ${version}` : `版本 ${version}`}</p>
           </div>
         <div className="flex gap-2 justify-center flex-wrap">
+          {/* 检查个人 fork 仓库更新 */}
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-2"
+            onClick={() => checkForkRepoUpdates()}
+            disabled={isCheckingForkUpdate}
+          >
+            <RefreshCw className={cn("h-4 w-4", isCheckingForkUpdate && "animate-spin")} />
+            {isCheckingForkUpdate ? (isEn ? 'Checking...' : '检查中...') : (isEn ? 'Check My Updates' : '检查我的更新')}
+          </Button>
+          {/* 检查原作者仓库更新 */}
           <Button
             variant="outline"
             size="sm"
@@ -94,7 +124,7 @@ export function AboutPage() {
             disabled={isCheckingUpdate}
           >
             <RefreshCw className={cn("h-4 w-4", isCheckingUpdate && "animate-spin")} />
-            {isCheckingUpdate ? (isEn ? 'Checking...' : '检查中...') : (isEn ? 'Check Updates' : '检查更新')}
+            {isCheckingUpdate ? (isEn ? 'Checking...' : '检查中...') : (isEn ? 'Check Upstream' : '检查上游更新')}
           </Button>
           <Button
             variant="outline"
@@ -108,13 +138,22 @@ export function AboutPage() {
         </div>
         
         {/* 更新提示 */}
-        {updateInfo?.hasUpdate && !showUpdateModal && (
-          <div 
+        {forkUpdateInfo?.hasUpdate && !showForkUpdateModal && (
+          <div
             className="inline-flex items-center gap-2 px-3 py-1.5 bg-primary/10 text-primary rounded-full text-sm cursor-pointer hover:bg-primary/20"
+            onClick={() => setShowForkUpdateModal(true)}
+          >
+            <Download className="h-4 w-4" />
+            {isEn ? `New version v${forkUpdateInfo.latestVersion}` : `发现新版本 v${forkUpdateInfo.latestVersion}`}
+          </div>
+        )}
+        {updateInfo?.hasUpdate && !showUpdateModal && !forkUpdateInfo?.hasUpdate && (
+          <div
+            className="inline-flex items-center gap-2 px-3 py-1.5 bg-muted text-muted-foreground rounded-full text-sm cursor-pointer hover:bg-muted/80"
             onClick={() => setShowUpdateModal(true)}
           >
             <Download className="h-4 w-4" />
-            {isEn ? `New version v${updateInfo.latestVersion}` : `发现新版本 v${updateInfo.latestVersion}`}
+            {isEn ? `Upstream v${updateInfo.latestVersion}` : `上游新版本 v${updateInfo.latestVersion}`}
           </div>
         )}
         </div>
@@ -214,6 +253,110 @@ export function AboutPage() {
                       <h3 className="font-semibold text-lg">{isEn ? 'Up to Date' : '已是最新版本'}</h3>
                       <p className="text-sm text-muted-foreground">
                         {isEn ? `Version v${updateInfo.currentVersion} is the latest` : `当前版本 v${updateInfo.currentVersion} 已经是最新的了`}
+                      </p>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Fork 仓库更新弹窗 */}
+      {showForkUpdateModal && forkUpdateInfo && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/50" onClick={() => setShowForkUpdateModal(false)} />
+          <div className="relative bg-card rounded-xl p-6 shadow-xl z-10 max-w-md w-full mx-4 max-h-[80vh] overflow-y-auto">
+            <button
+              className="absolute top-3 right-3 text-muted-foreground hover:text-foreground"
+              onClick={() => setShowForkUpdateModal(false)}
+            >
+              <X className="h-5 w-5" />
+            </button>
+
+            <div className="space-y-4">
+              {forkUpdateInfo.hasUpdate ? (
+                <>
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 rounded-full bg-green-500/10">
+                      <Download className="h-6 w-6 text-green-500" />
+                    </div>
+                    <div>
+                      <h3 className="font-semibold text-lg">{isEn ? 'New Version Available' : '发现新版本'}</h3>
+                      <p className="text-sm text-muted-foreground">
+                        {forkUpdateInfo.currentVersion} → {forkUpdateInfo.latestVersion}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="bg-muted/50 rounded-lg p-3">
+                    <p className="text-sm font-medium mb-2">{forkUpdateInfo.releaseName}</p>
+                    {forkUpdateInfo.publishedAt && (
+                      <p className="text-xs text-muted-foreground">
+                        {isEn ? `Released: ${new Date(forkUpdateInfo.publishedAt).toLocaleDateString('en-US')}` : `发布时间: ${new Date(forkUpdateInfo.publishedAt).toLocaleDateString('zh-CN')}`}
+                      </p>
+                    )}
+                  </div>
+
+                  {forkUpdateInfo.releaseNotes && (
+                    <div className="space-y-2">
+                      <p className="text-sm font-medium">{isEn ? 'Release Notes:' : '更新内容:'}</p>
+                      <div className="text-sm text-muted-foreground bg-muted/30 rounded-lg p-3 max-h-32 overflow-y-auto whitespace-pre-wrap">
+                        {forkUpdateInfo.releaseNotes}
+                      </div>
+                    </div>
+                  )}
+
+                  {forkUpdateInfo.assets && forkUpdateInfo.assets.length > 0 && (
+                    <div className="space-y-2">
+                      <p className="text-sm font-medium">{isEn ? 'Download Files:' : '下载文件:'}</p>
+                      <div className="space-y-1 max-h-32 overflow-y-auto">
+                        {forkUpdateInfo.assets.slice(0, 6).map((asset, i) => (
+                          <div key={i} className="flex items-center justify-between text-xs bg-muted/30 rounded px-2 py-1">
+                            <span className="truncate flex-1">{asset.name}</span>
+                            <span className="text-muted-foreground ml-2">{formatFileSize(asset.size)}</span>
+                          </div>
+                        ))}
+                        {forkUpdateInfo.assets.length > 6 && (
+                          <p className="text-xs text-muted-foreground text-center">
+                            {isEn ? `${forkUpdateInfo.assets.length - 6} more files...` : `还有 ${forkUpdateInfo.assets.length - 6} 个文件...`}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  <Button className="w-full gap-2" onClick={() => forkUpdateInfo.releaseUrl && window.api.openExternal(forkUpdateInfo.releaseUrl)}>
+                    <ExternalLink className="h-4 w-4" />
+                    {isEn ? 'Go to Download Page' : '前往下载页面'}
+                  </Button>
+                </>
+              ) : forkUpdateInfo.error ? (
+                <>
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 rounded-full bg-red-500/10">
+                      <AlertCircle className="h-6 w-6 text-red-500" />
+                    </div>
+                    <div>
+                      <h3 className="font-semibold text-lg">{isEn ? 'Check Failed' : '检查更新失败'}</h3>
+                      <p className="text-sm text-muted-foreground">{forkUpdateInfo.error}</p>
+                    </div>
+                  </div>
+                  <Button variant="outline" className="w-full" onClick={checkForkRepoUpdates}>
+                    {isEn ? 'Retry' : '重试'}
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 rounded-full bg-green-500/10">
+                      <CheckCircle className="h-6 w-6 text-green-500" />
+                    </div>
+                    <div>
+                      <h3 className="font-semibold text-lg">{isEn ? 'Up to Date' : '已是最新版本'}</h3>
+                      <p className="text-sm text-muted-foreground">
+                        {isEn ? `Version v${forkUpdateInfo.currentVersion} is the latest` : `当前版本 v${forkUpdateInfo.currentVersion} 已经是最新的了`}
                       </p>
                     </div>
                   </div>

@@ -447,6 +447,25 @@ const api = {
     return ipcRenderer.invoke('check-for-updates-manual')
   },
 
+  // 检查个人 fork 仓库更新
+  checkForkRepoUpdates: (): Promise<{
+    hasUpdate: boolean
+    currentVersion?: string
+    latestVersion?: string
+    releaseNotes?: string
+    releaseName?: string
+    releaseUrl?: string
+    publishedAt?: string
+    assets?: Array<{
+      name: string
+      downloadUrl: string
+      size: number
+    }>
+    error?: string
+  }> => {
+    return ipcRenderer.invoke('check-fork-repo-updates')
+  },
+
   // 下载更新
   downloadUpdate: (): Promise<{ success: boolean; error?: string }> => {
     return ipcRenderer.invoke('download-update')

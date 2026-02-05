@@ -1860,6 +1860,101 @@ app.whenReady().then(async () => {
     }
   })
 
+  // IPC: 检查个人 fork 仓库更新
+  const FORK_GITHUB_REPO = 'deerdeerdeerdee/Kiro-account-manager'
+  const FORK_GITHUB_API_URL = `https://api.github.com/repos/${FORK_GITHUB_REPO}/releases/latest`
+
+  ipcMain.handle('check-fork-repo-updates', async () => {
+    try {
+      console.log('[Update] Check fork repo via GitHub API...')
+      const currentVersion = app.getVersion()
+
+      const response = await fetch(FORK_GITHUB_API_URL, {
+        headers: {
+          'Accept': 'application/vnd.github.v3+json',
+          'User-Agent': 'Kiro-Account-Manager'
+        }
+      })
+
+      if (!response.ok) {
+        if (response.status === 403) {
+          throw new Error('GitHub API 请求次数超限，请稍后再试')
+        } else if (response.status === 404) {
+          throw new Error('未找到发布版本')
+        }
+        throw new Error(`GitHub API 错误: ${response.status}`)
+      }
+
+      const release = await response.json() as {
+        tag_name: string
+        name: string
+        body: string
+        html_url: string
+        published_at: string
+        assets: Array<{
+          name: string
+          browser_download_url: string
+          size: number
+        }>
+      }
+
+      const latestVersion = release.tag_name.replace(/^v/, '')
+
+      // 完整版本号比较（包括 fork 后缀如 -deer.x）
+      const compareVersions = (v1: string, v2: string): number => {
+        // 分离主版本号和后缀
+        const parseVersion = (v: string) => {
+          const [main, suffix] = v.split('-')
+          const mainParts = main.split('.').map(Number)
+          const suffixNum = suffix ? parseInt(suffix.replace(/[^0-9]/g, '')) || 0 : 0
+          return { mainParts, suffixNum, hasSuffix: !!suffix }
+        }
+
+        const p1 = parseVersion(v1)
+        const p2 = parseVersion(v2)
+
+        // 先比较主版本号
+        for (let i = 0; i < Math.max(p1.mainParts.length, p2.mainParts.length); i++) {
+          const n1 = p1.mainParts[i] || 0
+          const n2 = p2.mainParts[i] || 0
+          if (n1 > n2) return 1
+          if (n1 < n2) return -1
+        }
+
+        // 主版本号相同，比较后缀
+        if (p1.suffixNum > p2.suffixNum) return 1
+        if (p1.suffixNum < p2.suffixNum) return -1
+
+        return 0
+      }
+
+      const hasUpdate = compareVersions(latestVersion, currentVersion) > 0
+
+      console.log(`[Update] Fork repo - Current: ${currentVersion}, Latest: ${latestVersion}, HasUpdate: ${hasUpdate}`)
+
+      return {
+        hasUpdate,
+        currentVersion,
+        latestVersion,
+        releaseNotes: release.body || '',
+        releaseName: release.name || `v${latestVersion}`,
+        releaseUrl: release.html_url,
+        publishedAt: release.published_at,
+        assets: release.assets.map(a => ({
+          name: a.name,
+          downloadUrl: a.browser_download_url,
+          size: a.size
+        }))
+      }
+    } catch (error) {
+      console.error('[Update] Fork repo check failed:', error)
+      return {
+        hasUpdate: false,
+        error: error instanceof Error ? error.message : '检查更新失败'
+      }
+    }
+  })
+
   // IPC: 加载账号数据
   ipcMain.handle('load-accounts', async () => {
     try {
