@@ -630,6 +630,16 @@ const api = {
     return ipcRenderer.invoke('proxy-sync-accounts', accounts)
   },
 
+  // 更新反代池中单个账号的 Token（用于 Token 刷新后同步）
+  proxyUpdateAccountToken: (data: {
+    id: string
+    accessToken: string
+    refreshToken?: string
+    expiresAt: number
+  }): Promise<{ success: boolean; updated?: boolean; error?: string }> => {
+    return ipcRenderer.invoke('proxy-update-account-token', data)
+  },
+
   // 获取反代池账号列表
   proxyGetAccounts: (): Promise<{ accounts: unknown[]; availableCount: number }> => {
     return ipcRenderer.invoke('proxy-get-accounts')
