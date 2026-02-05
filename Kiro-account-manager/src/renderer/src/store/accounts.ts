@@ -1012,6 +1012,12 @@ export const useAccountsStore = create<AccountsStore>()((set, get) => ({
         authMethod?: string
         accessToken?: string
       }
+      // 用于判断是否为特殊 Enterprise 账号
+      unlimitedUsage?: boolean
+      usage?: {
+        limit?: number
+        usageUnknown?: boolean
+      }
     }> = []
 
     for (const id of ids) {
@@ -1028,6 +1034,12 @@ export const useAccountsStore = create<AccountsStore>()((set, get) => ({
           region: account.credentials.region,
           authMethod: account.credentials.authMethod,
           accessToken: account.credentials.accessToken
+        },
+        // 传递特殊账号标记
+        unlimitedUsage: account.unlimitedUsage,
+        usage: {
+          limit: account.usage.limit,
+          usageUnknown: account.usage.usageUnknown
         }
       })
     }
@@ -1941,6 +1953,12 @@ export const useAccountsStore = create<AccountsStore>()((set, get) => ({
         accessToken?: string
         provider?: string
       }
+      // 用于判断是否为特殊 Enterprise 账号
+      unlimitedUsage?: boolean
+      usage?: {
+        limit?: number
+        usageUnknown?: boolean
+      }
     }> = []
     
     for (const [id, account] of accounts) {
@@ -1970,6 +1988,12 @@ export const useAccountsStore = create<AccountsStore>()((set, get) => ({
             authMethod: account.credentials.authMethod,
             accessToken: account.credentials.accessToken,
             provider: account.credentials.provider
+          },
+          // 传递特殊账号标记
+          unlimitedUsage: account.unlimitedUsage,
+          usage: {
+            limit: account.usage.limit,
+            usageUnknown: account.usage.usageUnknown
           }
         })
       }
