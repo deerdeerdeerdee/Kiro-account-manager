@@ -241,6 +241,7 @@ export interface ProxyAccount {
   errorCount?: number
   isAvailable?: boolean
   cooldownUntil?: number
+  autoRecoverAt?: number  // 自动恢复时间点（用于 auth 错误等可恢复场景）
 }
 
 // API Key 格式类型

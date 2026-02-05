@@ -4817,11 +4817,57 @@ app.whenReady().then(async () => {
     try {
       const server = initProxyServer()
       const pool = server.getAccountPool()
-      pool.clear()
-      for (const account of accounts) {
-        pool.addAccount(account)
+
+      // 空数组保护：如果传入空数组且池中已有账号，不执行清空操作
+      if (accounts.length === 0 && pool.size > 0) {
+        console.log('[ProxyServer] Sync accounts: empty array received, keeping existing accounts')
+        return { success: true, accountCount: pool.size, skipped: true }
       }
-      return { success: true, accountCount: pool.size }
+
+      // 获取当前池中的所有账号 ID
+      const existingIds = new Set(pool.getAllAccounts().map(a => a.id))
+      const newIds = new Set(accounts.map(a => a.id))
+
+      // 计算需要删除的账号（在旧池中但不在新列表中）
+      const toRemove = [...existingIds].filter(id => !newIds.has(id))
+
+      // 计算需要添加或更新的账号
+      let added = 0
+      let updated = 0
+
+      for (const account of accounts) {
+        const existing = pool.getAccount(account.id)
+        if (existing) {
+          // 更新现有账号，保留运行时状态
+          pool.updateAccount(account.id, {
+            email: account.email,
+            accessToken: account.accessToken,
+            refreshToken: account.refreshToken,
+            clientId: account.clientId,
+            clientSecret: account.clientSecret,
+            region: account.region,
+            authMethod: account.authMethod,
+            provider: account.provider,
+            profileArn: account.profileArn,
+            expiresAt: account.expiresAt,
+            machineId: account.machineId
+            // 注意：不覆盖 errorCount, cooldownUntil, isAvailable, autoRecoverAt 等运行时状态
+          })
+          updated++
+        } else {
+          // 添加新账号
+          pool.addAccount(account)
+          added++
+        }
+      }
+
+      // 删除不再存在的账号
+      for (const id of toRemove) {
+        pool.removeAccount(id)
+      }
+
+      console.log(`[ProxyServer] Sync accounts: added=${added}, updated=${updated}, removed=${toRemove.length}, total=${pool.size}`)
+      return { success: true, accountCount: pool.size, added, updated, removed: toRemove.length }
     } catch (error) {
       console.error('[ProxyServer] Sync accounts failed:', error)
       return { success: false, error: error instanceof Error ? error.message : 'Failed to sync accounts' }

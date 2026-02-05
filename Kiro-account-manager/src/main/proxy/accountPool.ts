@@ -1,16 +1,27 @@
 // 多账号轮询管理器
 import type { ProxyAccount, AccountStats } from './types'
 
+// 错误类型分类
+export type ErrorType = 'quota' | 'auth' | 'network' | 'server' | 'unknown'
+
 export interface AccountPoolConfig {
-  cooldownMs: number // 错误后冷却时间
+  cooldownMs: number // 默认错误冷却时间
   maxErrorCount: number // 最大连续错误次数
   quotaResetMs: number // 配额重置时间
+  networkCooldownMs: number // 网络错误冷却时间
+  serverCooldownMs: number // 服务器错误冷却时间
+  autoRecoverMs: number // 自动恢复时间（用于 auth 错误）
+  expiryGracePeriodMs: number // Token 过期宽容期
 }
 
 const DEFAULT_CONFIG: AccountPoolConfig = {
-  cooldownMs: 60000, // 1分钟冷却
+  cooldownMs: 60000, // 1分钟默认冷却
   maxErrorCount: 3, // 3次错误后暂停
-  quotaResetMs: 3600000 // 1小时配额重置
+  quotaResetMs: 3600000, // 1小时配额重置
+  networkCooldownMs: 10000, // 10秒网络错误冷却
+  serverCooldownMs: 30000, // 30秒服务器错误冷却
+  autoRecoverMs: 300000, // 5分钟自动恢复（用于 auth 错误）
+  expiryGracePeriodMs: 60000 // 1分钟 Token 过期宽容期
 }
 
 export class AccountPool {
@@ -120,6 +131,25 @@ export class AccountPool {
 
   // 检查账号是否可用
   private isAccountAvailable(account: ProxyAccount, now: number): boolean {
+    // 检查自动恢复时间（用于 auth 错误等可恢复场景）
+    if (account.autoRecoverAt && account.autoRecoverAt <= now) {
+      // 自动恢复：重置状态
+      this.accounts.set(account.id, {
+        ...account,
+        isAvailable: true,
+        autoRecoverAt: undefined,
+        errorCount: 0,
+        cooldownUntil: undefined
+      })
+      console.log(`[AccountPool] Account ${account.email || account.id} auto-recovered`)
+      return true
+    }
+
+    // 如果设置了自动恢复时间但还未到，则不可用
+    if (account.autoRecoverAt && account.autoRecoverAt > now) {
+      return false
+    }
+
     // 检查冷却时间
     if (account.cooldownUntil && account.cooldownUntil > now) {
       return false
@@ -130,9 +160,12 @@ export class AccountPool {
       return false
     }
 
-    // 检查 token 是否过期
-    if (account.expiresAt && account.expiresAt < now) {
-      return false
+    // 检查 token 是否过期（带宽容期）
+    if (account.expiresAt) {
+      const expiryWithGrace = account.expiresAt + this.config.expiryGracePeriodMs
+      if (expiryWithGrace < now) {
+        return false
+      }
     }
 
     return account.isAvailable !== false
@@ -181,30 +214,60 @@ export class AccountPool {
   }
 
   // 记录请求失败
-  recordError(accountId: string, isQuotaError: boolean = false): void {
+  recordError(accountId: string, errorType: ErrorType = 'unknown'): void {
     const account = this.accounts.get(accountId)
     if (!account) return
 
-    const errorCount = (account.errorCount || 0) + 1
     const now = Date.now()
-
+    let errorCount = account.errorCount || 0
     let cooldownUntil = account.cooldownUntil || 0
+    let autoRecoverAt = account.autoRecoverAt
     let isAvailable = account.isAvailable !== false
 
-    if (isQuotaError) {
-      // 配额错误，长时间冷却
-      cooldownUntil = now + this.config.quotaResetMs
-      console.log(`[AccountPool] Account ${account.email || accountId} quota exhausted, cooldown until ${new Date(cooldownUntil).toISOString()}`)
-    } else if (errorCount >= this.config.maxErrorCount) {
-      // 连续错误过多，进入冷却
-      cooldownUntil = now + this.config.cooldownMs
-      console.log(`[AccountPool] Account ${account.email || accountId} too many errors, cooldown until ${new Date(cooldownUntil).toISOString()}`)
+    // 根据错误类型应用不同的冷却策略
+    switch (errorType) {
+      case 'quota':
+        // 配额错误，长时间冷却，不增加错误计数
+        cooldownUntil = now + this.config.quotaResetMs
+        console.log(`[AccountPool] Account ${account.email || accountId} quota exhausted, cooldown until ${new Date(cooldownUntil).toISOString()}`)
+        break
+
+      case 'auth':
+        // 认证错误，设置自动恢复时间，不增加错误计数
+        autoRecoverAt = now + this.config.autoRecoverMs
+        isAvailable = false
+        console.log(`[AccountPool] Account ${account.email || accountId} auth error, will auto-recover at ${new Date(autoRecoverAt).toISOString()}`)
+        break
+
+      case 'network':
+        // 网络错误，短时间冷却，不增加错误计数
+        cooldownUntil = now + this.config.networkCooldownMs
+        console.log(`[AccountPool] Account ${account.email || accountId} network error, cooldown for ${this.config.networkCooldownMs}ms`)
+        break
+
+      case 'server':
+        // 服务器错误，中等冷却时间，增加错误计数
+        errorCount++
+        cooldownUntil = now + this.config.serverCooldownMs
+        console.log(`[AccountPool] Account ${account.email || accountId} server error (${errorCount}/${this.config.maxErrorCount}), cooldown for ${this.config.serverCooldownMs}ms`)
+        break
+
+      case 'unknown':
+      default:
+        // 未知错误，默认冷却时间，增加错误计数
+        errorCount++
+        if (errorCount >= this.config.maxErrorCount) {
+          cooldownUntil = now + this.config.cooldownMs
+          console.log(`[AccountPool] Account ${account.email || accountId} too many errors (${errorCount}), cooldown until ${new Date(cooldownUntil).toISOString()}`)
+        }
+        break
     }
 
     this.accounts.set(accountId, {
       ...account,
       errorCount,
       cooldownUntil,
+      autoRecoverAt,
       isAvailable,
       lastUsed: now
     })

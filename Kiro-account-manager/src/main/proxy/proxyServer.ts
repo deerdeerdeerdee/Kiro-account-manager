@@ -536,7 +536,7 @@ export class ProxyServer {
         // 402/429: 额度耗尽，切换端点或账号
         if (errMsg.includes('402') || errMsg.includes('429') || errMsg.includes('quota') || errMsg.includes('ThrottlingException') || errMsg.includes('reached the limit')) {
           console.log('[ProxyServer] Quota/throttle error, switching endpoint or account')
-          this.accountPool.recordError(currentAccount.id, true)
+          this.accountPool.recordError(currentAccount.id, 'quota')
           endpointIndex = (endpointIndex + 1) % 2 // 切换端点
           if (endpointIndex === 0) {
             // 已尝试所有端点，检查是否需要切换账号
@@ -1434,7 +1434,10 @@ export class ProxyServer {
 
           this.recordRequestFailed()
           const isQuotaError = error.message.includes('429') || error.message.includes('quota')
-          this.accountPool.recordError(account.id, isQuotaError)
+          const isAuthError = error.message.includes('401') || error.message.includes('403') || error.message.includes('Auth')
+          const isNetworkError = error.message.includes('ECONNREFUSED') || error.message.includes('ETIMEDOUT') || error.message.includes('network')
+          const errorType = isQuotaError ? 'quota' : isAuthError ? 'auth' : isNetworkError ? 'network' : 'server'
+          this.accountPool.recordError(account.id, errorType)
           this.events.onResponse?.({ path: '/v1/chat/completions', model, status: 500, error: error.message })
           this.recordRequest({ path: '/v1/chat/completions', model, accountId: account.id, responseTime: Date.now() - startTime, success: false, error: error.message })
           resolve()
@@ -1874,7 +1877,10 @@ export class ProxyServer {
 
           this.recordRequestFailed()
           const isQuotaError = error.message.includes('429') || error.message.includes('quota')
-          this.accountPool.recordError(account.id, isQuotaError)
+          const isAuthError = error.message.includes('401') || error.message.includes('403') || error.message.includes('Auth')
+          const isNetworkError = error.message.includes('ECONNREFUSED') || error.message.includes('ETIMEDOUT') || error.message.includes('network')
+          const errorType = isQuotaError ? 'quota' : isAuthError ? 'auth' : isNetworkError ? 'network' : 'server'
+          this.accountPool.recordError(account.id, errorType)
           this.events.onResponse?.({ path: '/v1/messages', model, status: 500, error: error.message })
           this.recordRequest({ path: '/v1/messages', model, accountId: account.id, responseTime: Date.now() - startTime, success: false, error: error.message })
           resolve()
@@ -1888,8 +1894,10 @@ export class ProxyServer {
     this.recordRequestFailed()
     const isQuotaError = error.message.includes('429') || error.message.includes('quota')
     const isAuthError = error.message.includes('401') || error.message.includes('403') || error.message.includes('Auth')
+    const isNetworkError = error.message.includes('ECONNREFUSED') || error.message.includes('ETIMEDOUT') || error.message.includes('network')
+    const errorType = isQuotaError ? 'quota' : isAuthError ? 'auth' : isNetworkError ? 'network' : 'server'
 
-    this.accountPool.recordError(account.id, isQuotaError)
+    this.accountPool.recordError(account.id, errorType)
 
     let statusCode = 500
     if (isQuotaError) statusCode = 429
