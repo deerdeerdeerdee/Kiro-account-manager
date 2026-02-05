@@ -1047,6 +1047,18 @@ const api = {
     return () => {
       ipcRenderer.removeListener('store-write-error', handler)
     }
+  },
+
+  // ============ 开机自启动 API ============
+
+  // 获取开机自启动状态
+  getAutoLaunch: (): Promise<{ enabled: boolean }> => {
+    return ipcRenderer.invoke('get-auto-launch')
+  },
+
+  // 设置开机自启动
+  setAutoLaunch: (enabled: boolean): Promise<{ success: boolean; enabled?: boolean; error?: string }> => {
+    return ipcRenderer.invoke('set-auto-launch', enabled)
   }
 }
 

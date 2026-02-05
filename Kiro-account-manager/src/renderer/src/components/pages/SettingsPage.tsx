@@ -156,6 +156,10 @@ export function SettingsPage() {
   })
   const [trayLoading, setTrayLoading] = useState(true)
 
+  // 开机自启动状态
+  const [autoLaunchEnabled, setAutoLaunchEnabled] = useState(false)
+  const [autoLaunchLoading, setAutoLaunchLoading] = useState(true)
+
   // 快捷键设置状态
   const [showWindowShortcut, setShowWindowShortcut] = useState('')
   const [shortcutLoading, setShortcutLoading] = useState(true)
@@ -287,6 +291,36 @@ export function SettingsPage() {
     }
     loadTraySettings()
   }, [])
+
+  // 加载开机自启动设置
+  useEffect(() => {
+    const loadAutoLaunch = async () => {
+      try {
+        const result = await window.api.getAutoLaunch()
+        setAutoLaunchEnabled(result.enabled)
+      } catch (error) {
+        console.error('Failed to load auto launch settings:', error)
+      } finally {
+        setAutoLaunchLoading(false)
+      }
+    }
+    loadAutoLaunch()
+  }, [])
+
+  // 切换开机自启动
+  const handleAutoLaunchChange = async () => {
+    setAutoLaunchLoading(true)
+    try {
+      const result = await window.api.setAutoLaunch(!autoLaunchEnabled)
+      if (result.success && result.enabled !== undefined) {
+        setAutoLaunchEnabled(result.enabled)
+      }
+    } catch (error) {
+      console.error('Failed to set auto launch:', error)
+    } finally {
+      setAutoLaunchLoading(false)
+    }
+  }
 
   // 保存托盘设置
   const handleTraySettingChange = async (key: keyof typeof traySettings, value: boolean | string) => {
@@ -877,6 +911,25 @@ export function SettingsPage() {
                   </div>
                 </>
               )}
+
+              <div className="flex items-center justify-between pt-2 border-t">
+                <div>
+                  <p className="font-medium">{isEn ? 'Launch at Startup' : '开机自启动'}</p>
+                  <p className="text-sm text-muted-foreground">{isEn ? 'Automatically start when system boots' : '系统启动时自动运行程序'}</p>
+                </div>
+                <Button
+                  variant={autoLaunchEnabled ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={handleAutoLaunchChange}
+                  disabled={autoLaunchLoading}
+                >
+                  {autoLaunchLoading
+                    ? (isEn ? 'Loading...' : '加载中...')
+                    : autoLaunchEnabled
+                      ? (isEn ? 'On' : '已开启')
+                      : (isEn ? 'Off' : '已关闭')}
+                </Button>
+              </div>
 
               <div className="text-xs text-muted-foreground bg-muted/50 rounded-lg p-3 space-y-1">
                 <p>• {isEn ? 'Double-click tray icon to show window' : '双击托盘图标可以显示主窗口'}</p>

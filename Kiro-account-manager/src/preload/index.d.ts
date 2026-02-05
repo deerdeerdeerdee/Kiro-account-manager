@@ -773,6 +773,18 @@ interface KiroApi {
 
   // 监听存储写入错误
   onStoreWriteError: (callback: (data: { error: string; key: string }) => void) => () => void
+
+  // ============ 开机自启动 API ============
+
+  // 获取开机自启动状态
+  getAutoLaunch: () => Promise<{ enabled: boolean }>
+
+  // 设置开机自启动
+  setAutoLaunch: (enabled: boolean) => Promise<{
+    success: boolean
+    enabled?: boolean
+    error?: string
+  }>
 }
 
 declare global {
