@@ -337,13 +337,31 @@ export function ProxyPanel() {
       }
     })
 
+    // 监听存储 EPERM 警告
+    const unsubEpermWarning = window.api.onStoreEpermWarning?.((data) => {
+      console.warn('[Store] EPERM warning:', data)
+      setError(isEn
+        ? `Data saved (fallback mode). For better performance, add "${data.path}" to your antivirus exclusion list.`
+        : `数据已保存（回退模式）。建议将 "${data.path}" 添加到杀毒软件排除列表以获得更好性能。`)
+    })
+
+    // 监听存储写入错误
+    const unsubWriteError = window.api.onStoreWriteError?.((data) => {
+      console.error('[Store] Write error:', data)
+      setError(isEn
+        ? `Failed to save data: ${data.error}`
+        : `数据保存失败: ${data.error}`)
+    })
+
     return () => {
       unsubRequest()
       unsubResponse()
       unsubError()
       unsubStatus()
+      unsubEpermWarning?.()
+      unsubWriteError?.()
     }
-  }, [fetchStatus])
+  }, [fetchStatus, isEn])
 
   // 账号变化时同步
   useEffect(() => {

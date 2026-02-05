@@ -1023,6 +1023,30 @@ const api = {
   // 发送关闭确认对话框响应
   sendCloseConfirmResponse: (action: 'minimize' | 'quit' | 'cancel', rememberChoice: boolean): void => {
     ipcRenderer.send('close-confirm-response', action, rememberChoice)
+  },
+
+  // ============ 存储错误事件监听 ============
+
+  // 监听存储 EPERM 警告
+  onStoreEpermWarning: (callback: (data: { message: string; path: string }) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: { message: string; path: string }): void => {
+      callback(data)
+    }
+    ipcRenderer.on('store-eperm-warning', handler)
+    return () => {
+      ipcRenderer.removeListener('store-eperm-warning', handler)
+    }
+  },
+
+  // 监听存储写入错误
+  onStoreWriteError: (callback: (data: { error: string; key: string }) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: { error: string; key: string }): void => {
+      callback(data)
+    }
+    ipcRenderer.on('store-write-error', handler)
+    return () => {
+      ipcRenderer.removeListener('store-write-error', handler)
+    }
   }
 }
 

@@ -1097,24 +1097,80 @@ let store: {
 // 最后保存的数据（用于崩溃恢复）
 let lastSavedData: unknown = null
 
+// 最后一次 EPERM 错误通知时间（避免频繁通知）
+let lastEpermNotifyTime = 0
+
 async function initStore(): Promise<void> {
   if (store) return
   const Store = (await import('electron-store')).default
   const fs = await import('fs/promises')
+  const fsSync = await import('fs')
   const path = await import('path')
-  
+
   const storeInstance = new Store({
     name: 'kiro-accounts',
     encryptionKey: 'kiro-account-manager-secret-key'
   })
-  
-  store = storeInstance as unknown as typeof store
-  
+
+  // 创建带有 EPERM 错误处理的包装器
+  const safeSet = (key: string, value: unknown): void => {
+    try {
+      storeInstance.set(key, value)  // 尝试原子写入
+    } catch (error: unknown) {
+      const err = error as NodeJS.ErrnoException
+      // 检查是否是 Windows EPERM/EBUSY/EACCES 错误
+      if (err.code === 'EPERM' || err.code === 'EBUSY' || err.code === 'EACCES') {
+        console.warn(`[Store] Atomic write failed (${err.code}), falling back to direct write...`)
+
+        // 回退到直接写入（非原子方式）
+        try {
+          const currentData = (() => {
+            try {
+              const content = fsSync.readFileSync(storeInstance.path, 'utf-8')
+              return JSON.parse(content)
+            } catch {
+              return {}
+            }
+          })()
+
+          currentData[key] = value
+          fsSync.writeFileSync(storeInstance.path, JSON.stringify(currentData, null, 2), 'utf-8')
+          console.log('[Store] Direct write succeeded')
+
+          // 通知用户（每 5 分钟最多一次）
+          const now = Date.now()
+          if (now - lastEpermNotifyTime > 5 * 60 * 1000) {
+            lastEpermNotifyTime = now
+            mainWindow?.webContents.send('store-eperm-warning', {
+              message: 'Data saved using fallback mode due to file permission issue',
+              path: path.dirname(storeInstance.path)
+            })
+          }
+        } catch (fallbackError) {
+          console.error('[Store] Direct write also failed:', fallbackError)
+          mainWindow?.webContents.send('store-write-error', {
+            error: String(fallbackError),
+            key
+          })
+          throw fallbackError
+        }
+      } else {
+        throw error
+      }
+    }
+  }
+
+  store = {
+    get: (key: string, defaultValue?: unknown) => storeInstance.get(key, defaultValue),
+    set: safeSet,
+    path: storeInstance.path
+  }
+
   // 尝试从备份恢复数据（如果主数据损坏）
   try {
     const backupPath = path.join(path.dirname(storeInstance.path), 'kiro-accounts.backup.json')
     const mainData = storeInstance.get('accountData')
-    
+
     if (!mainData) {
       // 主数据不存在或损坏，尝试从备份恢复
       try {
@@ -1122,7 +1178,7 @@ async function initStore(): Promise<void> {
         const backupData = JSON.parse(backupContent)
         if (backupData && backupData.accounts) {
           console.log('[Store] Restoring data from backup...')
-          storeInstance.set('accountData', backupData)
+          safeSet('accountData', backupData)
           console.log('[Store] Data restored from backup successfully')
         }
       } catch {
@@ -1137,14 +1193,27 @@ async function initStore(): Promise<void> {
 // 创建数据备份
 async function createBackup(data: unknown): Promise<void> {
   if (!store) return
-  
+
   try {
-    const fs = await import('fs/promises')
+    const fsPromises = await import('fs/promises')
+    const fsSync = await import('fs')
     const path = await import('path')
     const backupPath = path.join(path.dirname(store.path), 'kiro-accounts.backup.json')
-    
-    await fs.writeFile(backupPath, JSON.stringify(data, null, 2), 'utf-8')
-    console.log('[Backup] Data backup created')
+
+    try {
+      await fsPromises.writeFile(backupPath, JSON.stringify(data, null, 2), 'utf-8')
+      console.log('[Backup] Data backup created')
+    } catch (error: unknown) {
+      const err = error as NodeJS.ErrnoException
+      // 检查是否是 Windows EPERM/EBUSY/EACCES 错误
+      if (err.code === 'EPERM' || err.code === 'EBUSY' || err.code === 'EACCES') {
+        console.warn(`[Backup] Async write failed (${err.code}), trying sync write...`)
+        fsSync.writeFileSync(backupPath, JSON.stringify(data, null, 2), 'utf-8')
+        console.log('[Backup] Sync write succeeded')
+      } else {
+        throw error
+      }
+    }
   } catch (error) {
     console.error('[Backup] Failed to create backup:', error)
   }
