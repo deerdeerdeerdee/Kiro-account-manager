@@ -37,3 +37,6 @@ docs/CodeWhispererRuntimeService API.md
 docs/Kiro API.md
 kiro_token.json
 Kiro.code-workspace
+**/CLAUDE.md
+**/.github/
+../.kiro/
