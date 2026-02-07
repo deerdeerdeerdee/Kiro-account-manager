@@ -1161,7 +1161,7 @@ export class ProxyServer {
       res.writeHead(200, {
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache',
-        'Connection': 'keep-alive'
+        'Connection': 'close'
       })
     }
 
@@ -1553,7 +1553,7 @@ export class ProxyServer {
       res.writeHead(200, {
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache',
-        'Connection': 'keep-alive'
+        'Connection': 'close'
       })
     }
 
