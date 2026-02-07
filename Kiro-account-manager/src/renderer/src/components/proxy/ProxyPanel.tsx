@@ -86,8 +86,10 @@ export function ProxyPanel() {
   const [recentLogs, setRecentLogs] = useState<Array<{ time: string; path: string; model?: string; status: number; tokens?: number; inputTokens?: number; outputTokens?: number; credits?: number; error?: string }>>([])
   const [isSyncing, setIsSyncing] = useState(false)
   const [isRefreshingModels, setIsRefreshingModels] = useState(false)
+  const [isResettingStates, setIsResettingStates] = useState(false)
   const [syncSuccess, setSyncSuccess] = useState(false)
   const [refreshSuccess, setRefreshSuccess] = useState(false)
+  const [resetStatesSuccess, setResetStatesSuccess] = useState(false)
   const [showLogsDialog, setShowLogsDialog] = useState(false)
   const [showDetailedLogsDialog, setShowDetailedLogsDialog] = useState(false)
   const [showModelsDialog, setShowModelsDialog] = useState(false)
@@ -202,6 +204,24 @@ export function ProxyPanel() {
       setIsSyncing(false)
     }
   }, [accounts, fetchStatus])
+
+  // 重置所有账号状态
+  const resetAccountStates = useCallback(async () => {
+    setIsResettingStates(true)
+    setResetStatesSuccess(false)
+    try {
+      const result = await window.api.proxyResetAllAccountStates()
+      if (result.success) {
+        await fetchStatus()
+        setResetStatesSuccess(true)
+        setTimeout(() => setResetStatesSuccess(false), 2000)
+      }
+    } catch (err) {
+      console.error('Failed to reset account states:', err)
+    } finally {
+      setIsResettingStates(false)
+    }
+  }, [fetchStatus])
 
   // 启动服务器
   const handleStart = async () => {
@@ -449,6 +469,10 @@ export function ProxyPanel() {
             <Button onClick={syncAccounts} variant="outline" className="gap-2" disabled={!isRunning || isSyncing}>
               {isSyncing ? <Loader2 className="h-4 w-4 animate-spin" /> : syncSuccess ? <Check className="h-4 w-4 text-green-500" /> : <RefreshCw className="h-4 w-4" />}
               {isSyncing ? (isEn ? 'Syncing...' : '同步中...') : syncSuccess ? (isEn ? 'Synced!' : '已同步') : (isEn ? 'Sync Accounts' : '同步账号')}
+            </Button>
+            <Button onClick={resetAccountStates} variant="outline" className="gap-2" disabled={!isRunning || isResettingStates}>
+              {isResettingStates ? <Loader2 className="h-4 w-4 animate-spin" /> : resetStatesSuccess ? <Check className="h-4 w-4 text-green-500" /> : <RotateCcw className="h-4 w-4" />}
+              {isResettingStates ? (isEn ? 'Resetting...' : '重置中...') : resetStatesSuccess ? (isEn ? 'Reset!' : '已重置') : (isEn ? 'Reset States' : '重置状态')}
             </Button>
             <Button onClick={handleRefreshModels} variant="outline" className="gap-2" disabled={!isRunning || isRefreshingModels}>
               {isRefreshingModels ? <Loader2 className="h-4 w-4 animate-spin" /> : refreshSuccess ? <Check className="h-4 w-4 text-green-500" /> : <RefreshCw className="h-4 w-4" />}

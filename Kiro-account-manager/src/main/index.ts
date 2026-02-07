@@ -5190,6 +5190,54 @@ app.whenReady().then(async () => {
     }
   })
 
+  // IPC: 获取账号诊断信息
+  ipcMain.handle('proxy-get-account-diagnostics', (_event, accountId: string) => {
+    try {
+      if (!proxyServer) {
+        return { success: false, error: 'Proxy server not initialized' }
+      }
+      const diagnostics = proxyServer.getAccountPool().getAccountDiagnostics(accountId)
+      if (!diagnostics) {
+        return { success: false, error: 'Account not found' }
+      }
+      return { success: true, diagnostics }
+    } catch (error) {
+      console.error('[ProxyServer] Get account diagnostics failed:', error)
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to get diagnostics' }
+    }
+  })
+
+  // IPC: 重置单个账号状态
+  ipcMain.handle('proxy-reset-account-state', (_event, accountId: string) => {
+    try {
+      if (!proxyServer) {
+        return { success: false, error: 'Proxy server not initialized' }
+      }
+      const result = proxyServer.getAccountPool().resetAccountState(accountId)
+      if (!result) {
+        return { success: false, error: 'Account not found' }
+      }
+      return { success: true }
+    } catch (error) {
+      console.error('[ProxyServer] Reset account state failed:', error)
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to reset account state' }
+    }
+  })
+
+  // IPC: 重置所有账号状态
+  ipcMain.handle('proxy-reset-all-account-states', () => {
+    try {
+      if (!proxyServer) {
+        return { success: false, error: 'Proxy server not initialized' }
+      }
+      const count = proxyServer.getAccountPool().resetAllAccountStates()
+      return { success: true, count }
+    } catch (error) {
+      console.error('[ProxyServer] Reset all account states failed:', error)
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to reset all account states' }
+    }
+  })
+
   // ============ K-Proxy MITM 代理 IPC ============
 
   // IPC: 初始化 K-Proxy 服务

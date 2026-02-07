@@ -669,6 +669,21 @@ const api = {
     return ipcRenderer.invoke('proxy-reset-pool')
   },
 
+  // 获取账号诊断信息
+  proxyGetAccountDiagnostics: (accountId: string): Promise<{ success: boolean; diagnostics?: object; error?: string }> => {
+    return ipcRenderer.invoke('proxy-get-account-diagnostics', accountId)
+  },
+
+  // 重置单个账号状态
+  proxyResetAccountState: (accountId: string): Promise<{ success: boolean; error?: string }> => {
+    return ipcRenderer.invoke('proxy-reset-account-state', accountId)
+  },
+
+  // 重置所有账号状态
+  proxyResetAllAccountStates: (): Promise<{ success: boolean; count?: number; error?: string }> => {
+    return ipcRenderer.invoke('proxy-reset-all-account-states')
+  },
+
   // 刷新模型缓存
   proxyRefreshModels: (): Promise<{ success: boolean; error?: string }> => {
     return ipcRenderer.invoke('proxy-refresh-models')

@@ -589,6 +589,15 @@ interface KiroApi {
   // 重置反代池状态
   proxyResetPool: () => Promise<{ success: boolean; error?: string }>
 
+  // 获取账号诊断信息
+  proxyGetAccountDiagnostics: (accountId: string) => Promise<{ success: boolean; diagnostics?: object; error?: string }>
+
+  // 重置单个账号状态
+  proxyResetAccountState: (accountId: string) => Promise<{ success: boolean; error?: string }>
+
+  // 重置所有账号状态
+  proxyResetAllAccountStates: () => Promise<{ success: boolean; count?: number; error?: string }>
+
   // 刷新模型缓存
   proxyRefreshModels: () => Promise<{ success: boolean; error?: string }>
 

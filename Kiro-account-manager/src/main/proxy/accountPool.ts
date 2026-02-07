@@ -282,14 +282,18 @@ export class AccountPool {
     }
   }
 
-  // 标记账号需要刷新 Token
+  // 标记账号需要刷新 Token（设置短暂冷却期，自动恢复）
   markNeedsRefresh(accountId: string): void {
     const account = this.accounts.get(accountId)
     if (account) {
+      const now = Date.now()
       this.accounts.set(accountId, {
         ...account,
-        isAvailable: false
+        isAvailable: false,
+        // 设置 30 秒后自动恢复，而不是永久不可用
+        autoRecoverAt: now + 30000
       })
+      console.log(`[AccountPool] Account ${account.email || accountId} marked needs refresh, will auto-recover in 30s`)
     }
   }
 
@@ -349,6 +353,60 @@ export class AccountPool {
         count++
       }
     }
+    return count
+  }
+
+  // 获取账号诊断信息
+  getAccountDiagnostics(accountId: string): object | null {
+    const account = this.accounts.get(accountId)
+    if (!account) return null
+
+    const now = Date.now()
+    return {
+      id: account.id,
+      email: account.email,
+      isAvailable: account.isAvailable,
+      errorCount: account.errorCount,
+      cooldownUntil: account.cooldownUntil,
+      autoRecoverAt: account.autoRecoverAt,
+      expiresAt: account.expiresAt,
+      isCurrentlyAvailable: this.isAccountAvailable(account, now),
+      cooldownRemaining: account.cooldownUntil ? Math.max(0, account.cooldownUntil - now) : 0,
+      autoRecoverRemaining: account.autoRecoverAt ? Math.max(0, account.autoRecoverAt - now) : 0,
+      tokenExpiresIn: account.expiresAt ? account.expiresAt - now : null
+    }
+  }
+
+  // 重置单个账号状态
+  resetAccountState(accountId: string): boolean {
+    const account = this.accounts.get(accountId)
+    if (!account) return false
+
+    this.accounts.set(accountId, {
+      ...account,
+      isAvailable: true,
+      errorCount: 0,
+      cooldownUntil: undefined,
+      autoRecoverAt: undefined
+    })
+    console.log(`[AccountPool] Reset account state: ${account.email || accountId}`)
+    return true
+  }
+
+  // 重置所有账号状态
+  resetAllAccountStates(): number {
+    let count = 0
+    for (const [id, account] of this.accounts) {
+      this.accounts.set(id, {
+        ...account,
+        isAvailable: true,
+        errorCount: 0,
+        cooldownUntil: undefined,
+        autoRecoverAt: undefined
+      })
+      count++
+    }
+    console.log(`[AccountPool] Reset all account states: ${count} accounts`)
     return count
   }
 }
