@@ -94,7 +94,7 @@ export function AccountDetailDialog({
     if (open && account?.credentials?.accessToken) {
       setModelsLoading(true)
       setModelsError(null)
-      window.api.accountGetModels(account.credentials.accessToken)
+      window.api.accountGetModels(account.credentials.accessToken, account.credentials?.region, account.profileArn)
         .then(result => {
           if (result.success) {
             setModels(result.models)

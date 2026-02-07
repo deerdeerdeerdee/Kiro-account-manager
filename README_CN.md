@@ -271,6 +271,19 @@ npx electron-builder --linux --arm64
 
 ## 📋 更新日志
 
+### v1.5.0 (2025-02-06)
+- 🌐 **API 区域路由修复**: 修复 EU 账号调用 ListAvailableModels/fetchSubscriptionToken/fetchAvailableSubscriptions 时 403 错误，所有 API 调用根据账号区域路由到正确端点（eu-* → eu-central-1，其他 → us-east-1）
+- 🔄 **区域 Fallback 机制**: 主端点返回 403 时自动尝试另一个区域端点，确保所有区域（ap-*、ca-*、sa-*、me-*、af-*）账号都能正常调用
+- 🔄 **Stale 状态修复**: 修复 GetUserInfo 返回 Stale 状态时被误判为错误的问题，Stale 现在视为正常状态
+- 📋 **模型列表增强**: fetchKiroModels 现在传递 profileArn 参数并支持分页，与官方插件一致，返回完整模型列表
+- ⚙️ **Kiro 设置页更新**: Model Selection 改为下拉框动态获取当前账号可用模型（fallback 到文本输入）；新增 Trusted Tools 配置项；描述文本全部与官方 IDE 对齐
+- ⚙️ **设置页模型获取优化**: 使用当前激活账号（isActive）而非 store 中第一个账号获取模型列表
+- 🔧 **反代模型获取修复**: getAvailableModels 改用 getAvailableAccount() 替代 getNextAccount()，关闭轮询后指定账号能被正确使用
+- 🔄 **CBOR → REST 自动 Fallback**: Enterprise/IdC 账号 CBOR API 失败时自动降级到 REST API（与官方 IDE 一致）
+- 💾 **磁盘写入优化**: 新增 debouncedStoreSet 防抖机制，将每次请求多次 store.set() 合并为每 5 秒批量写入；托盘菜单更新加 3 秒防抖；退出前 flushStoreWrites() 确保数据不丢失
+- 🔧 **PowerShell 多路径探测**: 优化管理员权限检测和提权重启，自动探测多个 PowerShell 路径（PS7/System32/SysWOW64/PATH），兼容更多 Windows 环境
+- 🐧 **Linux deb 包修复**: 添加 afterInstall 脚本，自动修复 chrome-sandbox SUID 权限和安装路径空格问题，解决 sandbox/execvp 启动失败
+
 ### v1.4.9 (2025-02-02)
 - 🗺️ **AWS Region 扩展**: OIDC 和在线登录的 AWS Region 从 3 个扩展到 21 个区域，分组显示（US/Europe/Asia Pacific/Other）
 - 🗺️ **AWS Region 自定义输入**: 新增自定义输入框，支持手动输入未列出的区域（如 cn-north-1）

@@ -31,6 +31,7 @@ interface KiroSettings {
   codeReferences: boolean
   configureMCP: string
   trustedCommands: string[]
+  trustedTools: Record<string, boolean>
   commandDenylist: string[]
   ignoreFiles: string[]
   mcpApprovedEnvVars: string[]
@@ -83,6 +84,7 @@ const defaultSettings: KiroSettings = {
   codeReferences: false,
   configureMCP: 'Enabled',
   trustedCommands: [],
+  trustedTools: {},
   commandDenylist: [],
   ignoreFiles: [],
   mcpApprovedEnvVars: [],
@@ -91,22 +93,6 @@ const defaultSettings: KiroSettings = {
   notificationsSuccess: false,
   notificationsBilling: true
 }
-
-const modelOptionsZh = [
-  { value: 'auto', label: 'Auto', description: '自动选择最佳模型' },
-  { value: 'claude-sonnet-4.5', label: 'Claude Sonnet 4.5', description: '最新 Sonnet 模型' },
-  { value: 'claude-sonnet-4', label: 'Claude Sonnet 4', description: '混合推理与编码' },
-  { value: 'claude-haiku-4.5', label: 'Claude Haiku 4.5', description: '最新 Haiku 模型' },
-  { value: 'claude-opus-4.5', label: 'Claude Opus 4.5', description: '最强大模型' }
-]
-
-const modelOptionsEn = [
-  { value: 'auto', label: 'Auto', description: 'Auto select best model' },
-  { value: 'claude-sonnet-4.5', label: 'Claude Sonnet 4.5', description: 'Latest Sonnet model' },
-  { value: 'claude-sonnet-4', label: 'Claude Sonnet 4', description: 'Hybrid reasoning & coding' },
-  { value: 'claude-haiku-4.5', label: 'Claude Haiku 4.5', description: 'Latest Haiku model' },
-  { value: 'claude-opus-4.5', label: 'Claude Opus 4.5', description: 'Most powerful model' }
-]
 
 const autonomyOptionsZh = [
   { value: 'Autopilot', label: 'Autopilot (自动执行)', description: 'Agent 自动执行任务' },
@@ -135,6 +121,8 @@ export function KiroSettingsPage() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [availableModels, setAvailableModels] = useState<Array<{ id: string; name: string; description: string }>>([])
+  const [loadingModels, setLoadingModels] = useState(false)
   
   const [expandedSections, setExpandedSections] = useState({
     agent: true,
@@ -144,18 +132,33 @@ export function KiroSettingsPage() {
   })
 
   const [newTrustedCommand, setNewTrustedCommand] = useState('')
+  const [newTrustedToolName, setNewTrustedToolName] = useState('')
   const [newDenyCommand, setNewDenyCommand] = useState('')
   const [editingFile, setEditingFile] = useState<string | null>(null)
   const [editingMcp, setEditingMcp] = useState<{ name?: string; server?: McpServer } | null>(null)
   const { t } = useTranslation()
   const isEn = t('common.unknown') === 'Unknown'
-  const modelOptions = isEn ? modelOptionsEn : modelOptionsZh
   const autonomyOptions = isEn ? autonomyOptionsEn : autonomyOptionsZh
   const mcpOptions = isEn ? mcpOptionsEn : mcpOptionsZh
 
   useEffect(() => {
     loadKiroSettings()
+    loadAvailableModels()
   }, [])
+
+  const loadAvailableModels = async () => {
+    setLoadingModels(true)
+    try {
+      const result = await window.api.getKiroAvailableModels()
+      if (result.models && result.models.length > 0) {
+        setAvailableModels(result.models)
+      }
+    } catch (err) {
+      console.error('Failed to load models:', err)
+    } finally {
+      setLoadingModels(false)
+    }
+  }
 
   const loadKiroSettings = async () => {
     setLoading(true)
@@ -397,7 +400,7 @@ export function KiroSettingsPage() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="font-medium">{isEn ? 'Agent Autonomy' : 'Agent 自主模式'}</p>
-                <p className="text-sm text-muted-foreground">{isEn ? 'Control if Agent auto-executes or needs confirmation' : '控制 Agent 是否自动执行或需要确认'}</p>
+                <p className="text-sm text-muted-foreground">{isEn ? 'Determines whether the agent will ask for accept/reject at each checkpoint in the workflow.' : '决定 Agent 在工作流的每个检查点是否要求接受/拒绝'}</p>
               </div>
               <Select
                 value={settings.agentAutonomy}
@@ -409,24 +412,49 @@ export function KiroSettingsPage() {
 
             {/* Model Selection */}
             <div className="flex items-center justify-between border-t pt-4">
-              <div>
+              <div className="flex-1 mr-4">
                 <p className="font-medium">{isEn ? 'Model Selection' : '模型选择'}</p>
-                <p className="text-sm text-muted-foreground">{isEn ? 'Select AI model for Agent' : '选择 Agent 使用的 AI 模型'}</p>
+                <p className="text-sm text-muted-foreground">{isEn ? 'Select model to use for agent operations.' : '选择 Agent 操作使用的模型'}</p>
               </div>
-              <Select
-                value={settings.modelSelection}
-                options={modelOptions}
-                onChange={(value) => setSettings(prev => ({ ...prev, modelSelection: value }))}
-                className="w-[200px]"
-              />
+              <div className="flex items-center gap-2">
+                {availableModels.length > 0 ? (
+                  <Select
+                    value={settings.modelSelection}
+                    options={availableModels.map(m => ({
+                      value: m.id,
+                      label: m.name || m.id,
+                      description: m.description
+                    }))}
+                    onChange={(value) => setSettings(prev => ({ ...prev, modelSelection: value }))}
+                    className="w-[240px]"
+                  />
+                ) : (
+                  <input
+                    type="text"
+                    value={settings.modelSelection}
+                    onChange={(e) => setSettings(prev => ({ ...prev, modelSelection: e.target.value }))}
+                    placeholder="claude-haiku-4.5"
+                    className="w-[240px] px-3 py-1.5 rounded-md border bg-background text-sm"
+                  />
+                )}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={loadAvailableModels}
+                  disabled={loadingModels}
+                  title={isEn ? 'Refresh models' : '刷新模型列表'}
+                >
+                  <RefreshCw className={`h-4 w-4 ${loadingModels ? 'animate-spin' : ''}`} />
+                </Button>
+              </div>
             </div>
 
             {/* Toggle Options */}
             <div className="border-t pt-4 space-y-4">
               <div className="flex items-center justify-between p-3 rounded-lg hover:bg-muted/50 transition-colors">
                 <div>
-                  <p className="font-medium">{isEn ? 'Tab Autocomplete' : 'Tab 自动补全'}</p>
-                  <p className="text-sm text-muted-foreground">{isEn ? 'Provide code suggestions while typing' : '输入时提供代码建议'}</p>
+                  <p className="font-medium">{isEn ? 'Enable Tab Autocomplete' : 'Tab 自动补全'}</p>
+                  <p className="text-sm text-muted-foreground">{isEn ? 'Tab Autocomplete allows Kiro Agent to provide code suggestions in the editor as you type.' : 'Tab 自动补全允许 Kiro Agent 在输入时提供代码建议'}</p>
                 </div>
                 <Toggle
                   checked={settings.enableTabAutocomplete}
@@ -437,7 +465,7 @@ export function KiroSettingsPage() {
               <div className="flex items-center justify-between p-3 rounded-lg hover:bg-muted/50 transition-colors">
                 <div>
                   <p className="font-medium">{isEn ? 'Usage Summary' : '使用统计'}</p>
-                  <p className="text-sm text-muted-foreground">{isEn ? 'Show Agent execution time and usage' : '显示 Agent 执行时间和用量'}</p>
+                  <p className="text-sm text-muted-foreground">{isEn ? 'Display usage summary and elapsed time for agent executions.' : '显示 Agent 执行的用量摘要和耗时'}</p>
                 </div>
                 <Toggle
                   checked={settings.usageSummary}
@@ -447,8 +475,8 @@ export function KiroSettingsPage() {
 
               <div className="flex items-center justify-between p-3 rounded-lg hover:bg-muted/50 transition-colors">
                 <div>
-                  <p className="font-medium">{isEn ? 'Code References' : '代码引用追踪'}</p>
-                  <p className="text-sm text-muted-foreground">{isEn ? 'Allow generating code with public code references' : '允许生成带公开代码引用的代码'}</p>
+                  <p className="font-medium">{isEn ? 'Code References: Reference Tracker' : '代码引用追踪'}</p>
+                  <p className="text-sm text-muted-foreground">{isEn ? 'Allow Kiro to generate code with code references. Sometimes code generated by Kiro may be similar to publicly available code.' : '允许 Kiro 生成带代码引用的代码。Kiro 生成的代码可能与公开可用代码相似。'}</p>
                 </div>
                 <Toggle
                   checked={settings.codeReferences}
@@ -458,8 +486,8 @@ export function KiroSettingsPage() {
 
               <div className="flex items-center justify-between p-3 rounded-lg hover:bg-muted/50 transition-colors">
                 <div>
-                  <p className="font-medium">{isEn ? 'Codebase Indexing' : '代码库索引'}</p>
-                  <p className="text-sm text-muted-foreground">{isEn ? 'Enable indexing for better search performance' : '启用代码库索引以提升搜索性能'}</p>
+                  <p className="font-medium">{isEn ? 'Enable Codebase Indexing' : '代码库索引'}</p>
+                  <p className="text-sm text-muted-foreground">{isEn ? 'Enable Repo Indexing (Experimental). This is an experimental feature which does not work with multi-folder workspaces.' : '启用仓库索引（实验性）。这是一个实验性功能，不支持多文件夹工作区。'}</p>
                 </div>
                 <Toggle
                   checked={settings.enableCodebaseIndexing}
@@ -469,8 +497,8 @@ export function KiroSettingsPage() {
 
               <div className="flex items-center justify-between p-3 rounded-lg hover:bg-muted/50 transition-colors">
                 <div>
-                  <p className="font-medium">{isEn ? 'Debug Logs' : '调试日志'}</p>
-                  <p className="text-sm text-muted-foreground">{isEn ? 'Show debug logs in output panel' : '在输出面板显示调试日志'}</p>
+                  <p className="font-medium">{isEn ? 'Enable Debug Logs' : '调试日志'}</p>
+                  <p className="text-sm text-muted-foreground">{isEn ? 'Enable Kiro Debug Logs in the Output panel.' : '在输出面板启用 Kiro 调试日志'}</p>
                 </div>
                 <Toggle
                   checked={settings.enableDebugLogs}
@@ -480,54 +508,49 @@ export function KiroSettingsPage() {
             </div>
 
             {/* 通知设置 */}
-            <div className="border-t pt-4 space-y-4">
-              <div className="flex items-center gap-2">
-                <div className="w-2 h-2 rounded-full bg-primary" />
-                <p className="font-medium text-sm">{isEn ? 'Notifications' : '通知设置'}</p>
-              </div>
-              
-              <div className="flex items-center justify-between p-3 rounded-lg hover:bg-muted/50 transition-colors">
-                <div>
-                  <p className="font-medium">{isEn ? 'Action Required' : '需要操作通知'}</p>
-                  <p className="text-sm text-muted-foreground">{isEn ? 'Notify when Agent needs confirmation' : 'Agent 需要确认时发送通知'}</p>
+            <div className="border-t pt-4">
+              <p className="font-medium mb-3">{isEn ? 'Notifications' : '通知设置'}</p>
+              <div className="space-y-3">
+                <div className="flex items-center justify-between p-3 rounded-lg hover:bg-muted/50 transition-colors">
+                  <div>
+                    <p className="font-medium">{isEn ? 'Agent: Action Required' : 'Agent: 需要操作'}</p>
+                    <p className="text-sm text-muted-foreground">{isEn ? 'Show desktop notification when the agent requires input, e.g. for a shell command.' : 'Agent 需要输入时显示桌面通知，如执行 Shell 命令时'}</p>
+                  </div>
+                  <Toggle
+                    checked={settings.notificationsActionRequired}
+                    onChange={(checked) => setSettings(prev => ({ ...prev, notificationsActionRequired: checked }))}
+                  />
                 </div>
-                <Toggle
-                  checked={settings.notificationsActionRequired}
-                  onChange={(checked) => setSettings(prev => ({ ...prev, notificationsActionRequired: checked }))}
-                />
-              </div>
-
-              <div className="flex items-center justify-between p-3 rounded-lg hover:bg-muted/50 transition-colors">
-                <div>
-                  <p className="font-medium">{isEn ? 'Failure Notification' : '失败通知'}</p>
-                  <p className="text-sm text-muted-foreground">{isEn ? 'Notify when Agent fails' : 'Agent 执行失败时发送通知'}</p>
+                <div className="flex items-center justify-between p-3 rounded-lg hover:bg-muted/50 transition-colors">
+                  <div>
+                    <p className="font-medium">{isEn ? 'Agent: Failure' : 'Agent: 失败'}</p>
+                    <p className="text-sm text-muted-foreground">{isEn ? 'Show desktop notification when the agent encounters an unexpected failure.' : 'Agent 遇到意外失败时显示桌面通知'}</p>
+                  </div>
+                  <Toggle
+                    checked={settings.notificationsFailure}
+                    onChange={(checked) => setSettings(prev => ({ ...prev, notificationsFailure: checked }))}
+                  />
                 </div>
-                <Toggle
-                  checked={settings.notificationsFailure}
-                  onChange={(checked) => setSettings(prev => ({ ...prev, notificationsFailure: checked }))}
-                />
-              </div>
-
-              <div className="flex items-center justify-between p-3 rounded-lg hover:bg-muted/50 transition-colors">
-                <div>
-                  <p className="font-medium">{isEn ? 'Success Notification' : '成功通知'}</p>
-                  <p className="text-sm text-muted-foreground">{isEn ? 'Notify when Agent succeeds' : 'Agent 执行成功时发送通知'}</p>
+                <div className="flex items-center justify-between p-3 rounded-lg hover:bg-muted/50 transition-colors">
+                  <div>
+                    <p className="font-medium">{isEn ? 'Agent: Success' : 'Agent: 成功'}</p>
+                    <p className="text-sm text-muted-foreground">{isEn ? 'Show desktop notifications when the agent successfully completes a task.' : 'Agent 成功完成任务时显示桌面通知'}</p>
+                  </div>
+                  <Toggle
+                    checked={settings.notificationsSuccess}
+                    onChange={(checked) => setSettings(prev => ({ ...prev, notificationsSuccess: checked }))}
+                  />
                 </div>
-                <Toggle
-                  checked={settings.notificationsSuccess}
-                  onChange={(checked) => setSettings(prev => ({ ...prev, notificationsSuccess: checked }))}
-                />
-              </div>
-
-              <div className="flex items-center justify-between p-3 rounded-lg hover:bg-muted/50 transition-colors">
-                <div>
-                  <p className="font-medium">{isEn ? 'Billing Notification' : '账单通知'}</p>
-                  <p className="text-sm text-muted-foreground">{isEn ? 'Billing related notifications' : '账单相关通知'}</p>
+                <div className="flex items-center justify-between p-3 rounded-lg hover:bg-muted/50 transition-colors">
+                  <div>
+                    <p className="font-medium">{isEn ? 'Billing' : '账单'}</p>
+                    <p className="text-sm text-muted-foreground">{isEn ? 'Show in-app notifications for billing and usage events (usage resets, low resources, overages).' : '显示账单和用量事件的应用内通知（用量重置、资源不足、超额）'}</p>
+                  </div>
+                  <Toggle
+                    checked={settings.notificationsBilling}
+                    onChange={(checked) => setSettings(prev => ({ ...prev, notificationsBilling: checked }))}
+                  />
                 </div>
-                <Toggle
-                  checked={settings.notificationsBilling}
-                  onChange={(checked) => setSettings(prev => ({ ...prev, notificationsBilling: checked }))}
-                />
               </div>
             </div>
           </CardContent>
@@ -730,6 +753,67 @@ export function KiroSettingsPage() {
                     onKeyDown={(e) => e.key === 'Enter' && addTrustedCommand()}
                   />
                   <Button variant="outline" size="sm" onClick={addTrustedCommand}>
+                    <Plus className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            </div>
+
+            {/* Trusted Tools */}
+            <div className="p-4 rounded-lg bg-muted/50 border border-border">
+              <div className="flex items-center gap-2 mb-3">
+                <Zap className="h-4 w-4 text-primary" />
+                <p className="font-medium">{isEn ? 'Trusted Tools' : '信任的工具'}</p>
+              </div>
+              <p className="text-sm text-muted-foreground mb-3">{isEn ? 'Tools to auto-accept if requested by the Agent. Each tool name maps to a boolean indicating whether it should be trusted.' : '当 Agent 请求使用这些工具时自动批准。每个工具名称对应是否信任的布尔值。'}</p>
+              <div className="space-y-2">
+                {Object.entries(settings.trustedTools).map(([name, trusted]) => (
+                  <div key={name} className="flex items-center gap-2">
+                    <code className="flex-1 px-2 py-1 bg-muted rounded text-sm">{name}</code>
+                    <Toggle
+                      checked={trusted}
+                      onChange={(checked) => setSettings(prev => ({
+                        ...prev,
+                        trustedTools: { ...prev.trustedTools, [name]: checked }
+                      }))}
+                    />
+                    <Button variant="ghost" size="sm" onClick={() => {
+                      setSettings(prev => {
+                        const tools = { ...prev.trustedTools }
+                        delete tools[name]
+                        return { ...prev, trustedTools: tools }
+                      })
+                    }}>
+                      <Trash2 className="h-4 w-4 text-destructive" />
+                    </Button>
+                  </div>
+                ))}
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={newTrustedToolName}
+                    onChange={(e) => setNewTrustedToolName(e.target.value)}
+                    placeholder={isEn ? 'Tool name' : '工具名称'}
+                    className="flex-1 px-3 py-1.5 rounded-md border bg-background text-sm"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && newTrustedToolName.trim()) {
+                        setSettings(prev => ({
+                          ...prev,
+                          trustedTools: { ...prev.trustedTools, [newTrustedToolName.trim()]: true }
+                        }))
+                        setNewTrustedToolName('')
+                      }
+                    }}
+                  />
+                  <Button variant="outline" size="sm" onClick={() => {
+                    if (newTrustedToolName.trim()) {
+                      setSettings(prev => ({
+                        ...prev,
+                        trustedTools: { ...prev.trustedTools, [newTrustedToolName.trim()]: true }
+                      }))
+                      setNewTrustedToolName('')
+                    }
+                  }}>
                     <Plus className="h-4 w-4" />
                   </Button>
                 </div>

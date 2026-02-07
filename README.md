@@ -271,6 +271,19 @@ The project is configured with GitHub Actions workflow for auto building all pla
 
 ## 📋 Changelog
 
+### v1.5.0 (2025-02-06)
+- 🌐 **API Regional Routing Fix**: Fixed 403 errors for EU accounts when calling ListAvailableModels/fetchSubscriptionToken/fetchAvailableSubscriptions, all API calls now route to correct regional endpoints (eu-* → eu-central-1, others → us-east-1)
+- 🔄 **Regional Fallback Mechanism**: Auto-retry with alternate regional endpoint on 403 errors, ensuring all regions (ap-*, ca-*, sa-*, me-*, af-*) work correctly
+- 🔄 **Stale Status Fix**: Fixed GetUserInfo "Stale" status being incorrectly treated as an error, Stale is now treated as a normal active state
+- 📋 **Model List Enhancement**: fetchKiroModels now passes profileArn parameter and supports pagination, consistent with official plugin, returns complete model list
+- ⚙️ **Kiro Settings Page Update**: Model Selection changed to dropdown with dynamic model fetching from current account (fallback to text input); added Trusted Tools config; descriptions aligned with official IDE
+- ⚙️ **Settings Model Fetch Optimization**: Settings page model list now uses the current active account (isActive) instead of the first account in store
+- 🔧 **Proxy Model Fetch Fix**: getAvailableModels now uses getAvailableAccount() instead of getNextAccount(), respecting multi-account toggle and selected account settings
+- 🔄 **CBOR → REST Auto Fallback**: Enterprise/IdC accounts automatically fall back from CBOR API to REST API on failure (consistent with official IDE behavior)
+- 💾 **Disk Write Optimization**: Added debouncedStoreSet mechanism to batch multiple store.set() calls into one write every 5 seconds; tray menu updates debounced to 3 seconds; flushStoreWrites() on exit to prevent data loss
+- 🔧 **PowerShell Multi-Path Detection**: Optimized admin privilege check and elevated restart with auto-detection of multiple PowerShell paths (PS7/System32/SysWOW64/PATH), compatible with more Windows environments
+- 🐧 **Linux deb Package Fix**: Added afterInstall script to auto-fix chrome-sandbox SUID permissions and install path space issue, resolving sandbox/execvp launch failures
+
 ### v1.4.9 (2025-02-02)
 - 🗺️ **AWS Region Expansion**: OIDC and online login AWS Regions expanded from 3 to 21, grouped by US/Europe/Asia Pacific/Other
 - 🗺️ **AWS Region Custom Input**: Added custom input field for manual entry of unlisted regions (e.g., cn-north-1)

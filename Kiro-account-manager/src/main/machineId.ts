@@ -12,6 +12,46 @@ import { app, dialog } from 'electron'
 
 const execAsync = promisify(exec)
 
+/**
+ * 查找可用的 PowerShell 可执行路径
+ * 按优先级尝试多个路径，兼容不同 Windows 环境
+ */
+function findPowerShell(): string | null {
+  const systemRoot = process.env.SystemRoot || process.env.WINDIR || 'C:\\Windows'
+  const candidates = [
+    // PowerShell 7+ (pwsh)
+    `${process.env.ProgramFiles}\\PowerShell\\7\\pwsh.exe`,
+    // 标准 WindowsPowerShell 路径
+    `${systemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`,
+    // SysWOW64 路径（32位进程在64位系统上）
+    `${systemRoot}\\SysWOW64\\WindowsPowerShell\\v1.0\\powershell.exe`,
+    // 直接用命令名（依赖 PATH）
+    'pwsh.exe',
+    'powershell.exe'
+  ]
+
+  for (const candidate of candidates) {
+    try {
+      // 对绝对路径检查文件是否存在
+      if (path.isAbsolute(candidate)) {
+        if (fs.existsSync(candidate)) return candidate
+      } else {
+        // 对命令名尝试 where.exe 查找
+        const result = execSync(`where.exe ${candidate}`, {
+          encoding: 'utf-8',
+          timeout: 3000,
+          stdio: ['pipe', 'pipe', 'ignore']
+        })
+        const found = result.trim().split('\n')[0]?.trim()
+        if (found && fs.existsSync(found)) return found
+      }
+    } catch {
+      continue
+    }
+  }
+  return null
+}
+
 export type OSType = 'windows' | 'macos' | 'linux' | 'unknown'
 
 export interface MachineIdResult {
@@ -116,34 +156,54 @@ export async function checkAdminPrivilege(): Promise<boolean> {
 
   try {
     switch (osType) {
-      case 'windows':
-        // 方法1: 使用 PowerShell 检查（最可靠）
-        try {
-          const result = execSync(
-            'powershell -NoProfile -Command "([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)"',
-            { encoding: 'utf-8', timeout: 5000, stdio: ['pipe', 'pipe', 'ignore'] }
-          )
-          const isAdmin = result.trim().toLowerCase() === 'true'
-          console.log('[MachineId] PowerShell admin check result:', isAdmin)
-          return isAdmin
-        } catch (error) {
-          console.log('[MachineId] PowerShell admin check failed:', error instanceof Error ? error.message : error)
+      case 'windows': {
+        // 方法1: 使用 PowerShell 检查（最可靠，多路径探测）
+        const psPath = findPowerShell()
+        if (psPath) {
+          try {
+            const psCmd = `"${psPath}" -NoProfile -Command "([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)"`
+            const result = execSync(psCmd, {
+              encoding: 'utf-8',
+              timeout: 5000,
+              stdio: ['pipe', 'pipe', 'ignore']
+            })
+            const isAdmin = result.trim().toLowerCase() === 'true'
+            console.log('[MachineId] PowerShell admin check result:', isAdmin, '(path:', psPath, ')')
+            return isAdmin
+          } catch (error) {
+            console.log('[MachineId] PowerShell admin check failed:', error instanceof Error ? error.message : error)
+          }
+        } else {
+          console.log('[MachineId] PowerShell not found, skipping PS admin check')
         }
-        
-        // 方法2: 尝试 net session（备用）
+
+        // 方法2: 尝试 net session（备用，不依赖 PowerShell）
+        const systemRoot = process.env.SystemRoot || process.env.WINDIR || 'C:\\Windows'
+        const netPath = `${systemRoot}\\System32\\net.exe`
         try {
-          execSync('net session', { stdio: 'ignore', timeout: 3000 })
+          const netCmd = fs.existsSync(netPath) ? `"${netPath}" session` : 'net session'
+          execSync(netCmd, { stdio: 'ignore', timeout: 3000 })
           console.log('[MachineId] net session succeeded, has admin')
           return true
         } catch {
           console.log('[MachineId] net session failed, no admin')
         }
-        
+
+        // 方法3: 尝试写入系统目录测试权限
+        try {
+          const testFile = `${systemRoot}\\Temp\\admin_check_${Date.now()}`
+          fs.writeFileSync(testFile, '')
+          fs.unlinkSync(testFile)
+          return false // Temp 目录普通用户也能写，此方法仅兜底
+        } catch {
+          // 忽略
+        }
+
         return false
-        
+      }
+
       case 'macos':
         // macOS 上写入用户目录不需要管理员权限
-        // 我们直接返回 true，因为可以写入 ~/Library/Application Support/
         return true
       case 'linux':
         // 检查是否为 root
@@ -168,17 +228,25 @@ export async function requestAdminRestart(): Promise<boolean> {
   try {
     switch (osType) {
       case 'windows': {
-        // Windows: 使用 cmd 启动 PowerShell 执行 Start-Process
-        // 这种方式更可靠，避免参数解析问题
-        const command = `powershell -NoProfile -Command "Start-Process -FilePath \\"${appPath.replace(/\\/g, '\\\\')}\\" -Verb RunAs"`
-        console.log('[MachineId] Running command:', command)
-        
-        exec(command, { windowsHide: true }, (error) => {
-          if (error) {
-            console.error('[MachineId] Admin restart failed:', error)
-          }
-        })
-        
+        // Windows: 多路径探测 PowerShell，使用 Start-Process -Verb RunAs 提权
+        const psPath = findPowerShell()
+        if (psPath) {
+          const escapedAppPath = appPath.replace(/\\/g, '\\\\')
+          const command = `"${psPath}" -NoProfile -Command "Start-Process -FilePath \"${escapedAppPath}\" -Verb RunAs"`
+          console.log('[MachineId] Running command:', command)
+
+          exec(command, { windowsHide: true }, (error) => {
+            if (error) {
+              console.error('[MachineId] Admin restart via PowerShell failed:', error)
+            }
+          })
+        } else {
+          // PowerShell 不可用时回退到 ShellExecute runas
+          console.log('[MachineId] PowerShell not found, using electron shell openPath with runas')
+          const { shell } = await import('electron')
+          shell.openExternal(`file:///${appPath}`)
+        }
+
         // 延迟退出，确保命令有时间执行
         setTimeout(() => {
           console.log('[MachineId] Quitting app...')
@@ -257,18 +325,21 @@ async function getWindowsMachineId(): Promise<MachineIdResult> {
     console.log('[MachineId] reg query failed, trying PowerShell:', error instanceof Error ? error.message : error)
   }
 
-  // 方法2: 使用 PowerShell 读取注册表（某些 Win11 环境下更可靠）
-  try {
-    const { stdout } = await execAsync(
-      'powershell -NoProfile -Command "(Get-ItemProperty -Path \'HKLM:\\SOFTWARE\\Microsoft\\Cryptography\' -Name MachineGuid).MachineGuid"',
-      { timeout: 10000 }
-    )
-    const machineId = stdout.trim().toLowerCase()
-    if (machineId && isValidMachineId(machineId)) {
-      return { success: true, machineId }
+  // 方法2: 使用 PowerShell 读取注册表（某些 Win11 环境下更可靠，多路径探测）
+  const psPath = findPowerShell()
+  if (psPath) {
+    try {
+      const { stdout } = await execAsync(
+        `"${psPath}" -NoProfile -Command "(Get-ItemProperty -Path 'HKLM:\\SOFTWARE\\Microsoft\\Cryptography' -Name MachineGuid).MachineGuid"`,
+        { timeout: 10000 }
+      )
+      const machineId = stdout.trim().toLowerCase()
+      if (machineId && isValidMachineId(machineId)) {
+        return { success: true, machineId }
+      }
+    } catch (error) {
+      console.log('[MachineId] PowerShell failed, trying WMIC:', error instanceof Error ? error.message : error)
     }
-  } catch (error) {
-    console.log('[MachineId] PowerShell failed, trying WMIC:', error instanceof Error ? error.message : error)
   }
 
   // 方法3: 使用 WMIC 获取 UUID（备用方案）

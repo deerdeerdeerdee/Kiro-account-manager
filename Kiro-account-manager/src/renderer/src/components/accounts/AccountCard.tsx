@@ -314,7 +314,7 @@ export const AccountCard = memo(function AccountCard({
     setSubscriptionLoading(true)
     try {
       // 统一先获取可用订阅列表
-      const result = await window.api.accountGetSubscriptions(account.credentials.accessToken)
+      const result = await window.api.accountGetSubscriptions(account.credentials.accessToken, account.credentials?.region)
       if (result.success && result.plans.length > 0) {
         setSubscriptionPlans(result.plans)
         // 检查是否是首次用户（当前订阅类型为 FREE 或无订阅）
@@ -340,7 +340,7 @@ export const AccountCard = memo(function AccountCard({
     setPaymentLoading(true)
     setSubscriptionError(null)
     try {
-      const result = await window.api.accountGetSubscriptionUrl(account.credentials.accessToken, planName)
+      const result = await window.api.accountGetSubscriptionUrl(account.credentials.accessToken, planName, account.credentials?.region)
       if (result.success && result.url) {
         // 自动复制链接到剪贴板
         await navigator.clipboard.writeText(result.url)
@@ -375,7 +375,7 @@ export const AccountCard = memo(function AccountCard({
     setPaymentLoading(true)
     setSubscriptionError(null)
     try {
-      const result = await window.api.accountGetSubscriptionUrl(account.credentials.accessToken)
+      const result = await window.api.accountGetSubscriptionUrl(account.credentials.accessToken, undefined, account.credentials?.region)
       if (result.success && result.url) {
         setShowSubscriptionDialog(false)
         await window.api.openSubscriptionWindow(result.url)

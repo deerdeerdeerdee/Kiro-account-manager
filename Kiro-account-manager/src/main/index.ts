@@ -87,7 +87,31 @@ function setupAutoUpdater(): void {
 
 // ============ Kiro API 调用 ============
 const KIRO_API_BASE = 'https://app.kiro.dev/service/KiroWebPortalService/operation'
-const KIRO_REST_API_BASE = 'https://q.us-east-1.amazonaws.com'
+// REST API 端点配置 - 官方 Kiro 插件仅支持 us-east-1 和 eu-central-1
+const KIRO_REST_API_ENDPOINTS: Record<string, string> = {
+  'us-east-1': 'https://q.us-east-1.amazonaws.com',
+  'eu-central-1': 'https://q.eu-central-1.amazonaws.com'
+}
+
+// 根据 SSO 区域映射到最近的 REST API 端点
+function getRestApiBase(ssoRegion?: string): string {
+  if (!ssoRegion) return KIRO_REST_API_ENDPOINTS['us-east-1']
+  // 如果是支持的端点区域，直接使用
+  if (KIRO_REST_API_ENDPOINTS[ssoRegion]) return KIRO_REST_API_ENDPOINTS[ssoRegion]
+  // EU 区域映射到 eu-central-1
+  if (ssoRegion.startsWith('eu-')) return KIRO_REST_API_ENDPOINTS['eu-central-1']
+  // 其他区域默认 us-east-1
+  return KIRO_REST_API_ENDPOINTS['us-east-1']
+}
+
+// 获取备用 REST API 端点（用于 fallback）
+function getFallbackRestApiBase(ssoRegion?: string): string {
+  const primary = getRestApiBase(ssoRegion)
+  // 返回另一个端点作为 fallback
+  return primary === KIRO_REST_API_ENDPOINTS['eu-central-1']
+    ? KIRO_REST_API_ENDPOINTS['us-east-1']
+    : KIRO_REST_API_ENDPOINTS['eu-central-1']
+}
 
 // API 类型配置
 type UsageApiType = 'rest' | 'cbor'
@@ -161,6 +185,37 @@ function applyProxySettings(enabled: boolean, url: string): void {
     delete process.env.https_proxy
     console.log('[Proxy] Disabled')
   }
+}
+
+// ============ 防抖 store 写入（减少磁盘 I/O） ============
+const pendingStoreWrites: Map<string, unknown> = new Map()
+let storeFlushTimer: ReturnType<typeof setTimeout> | null = null
+const STORE_FLUSH_INTERVAL = 5000 // 5 秒批量写入一次
+
+function debouncedStoreSet(key: string, value: unknown): void {
+  pendingStoreWrites.set(key, value)
+  if (!storeFlushTimer) {
+    storeFlushTimer = setTimeout(flushStoreWrites, STORE_FLUSH_INTERVAL)
+  }
+}
+
+function flushStoreWrites(): void {
+  storeFlushTimer = null
+  if (!store || pendingStoreWrites.size === 0) return
+  for (const [key, value] of pendingStoreWrites) {
+    store.set(key, value)
+  }
+  pendingStoreWrites.clear()
+}
+
+let trayMenuTimer: ReturnType<typeof setTimeout> | null = null
+
+function debouncedUpdateTrayMenu(): void {
+  if (trayMenuTimer) return
+  trayMenuTimer = setTimeout(() => {
+    trayMenuTimer = null
+    updateTrayMenu()
+  }, 3000)
 }
 
 // ============ Kiro API 反代服务器 ============
@@ -258,28 +313,22 @@ function initProxyServer(): ProxyServer {
           expiresAt: account.expiresAt
         })
       },
-      // Credits 更新回调 - 持久化累计 credits
+      // Credits 更新回调 - 使用防抖持久化
       onCreditsUpdate: (totalCredits) => {
-        if (store) {
-          store.set('proxyTotalCredits', totalCredits)
-        }
+        debouncedStoreSet('proxyTotalCredits', totalCredits)
       },
-      // Tokens 更新回调 - 持久化累计 tokens
+      // Tokens 更新回调 - 使用防抖持久化
       onTokensUpdate: (inputTokens, outputTokens) => {
-        if (store) {
-          store.set('proxyInputTokens', inputTokens)
-          store.set('proxyOutputTokens', outputTokens)
-        }
+        debouncedStoreSet('proxyInputTokens', inputTokens)
+        debouncedStoreSet('proxyOutputTokens', outputTokens)
       },
-      // 请求统计更新回调 - 持久化请求统计
+      // 请求统计更新回调 - 使用防抖持久化
       onRequestStatsUpdate: (totalRequests, successRequests, failedRequests) => {
-        if (store) {
-          store.set('proxyTotalRequests', totalRequests)
-          store.set('proxySuccessRequests', successRequests)
-          store.set('proxyFailedRequests', failedRequests)
-        }
-        // 更新托盘菜单
-        updateTrayMenu()
+        debouncedStoreSet('proxyTotalRequests', totalRequests)
+        debouncedStoreSet('proxySuccessRequests', successRequests)
+        debouncedStoreSet('proxyFailedRequests', failedRequests)
+        // 更新托盘菜单（也防抖，避免频繁重建菜单）
+        debouncedUpdateTrayMenu()
       }
     }
   )
@@ -888,18 +937,43 @@ function normalizeResetDate(value: number | string | undefined): string | undefi
   return value
 }
 
+async function fetchRestApi(
+  baseUrl: string,
+  path: string,
+  accessToken: string,
+  machineId?: string
+): Promise<Response> {
+  const agent = getKProxyAgent()
+  const headers: Record<string, string> = {
+    'Accept': 'application/json',
+    'Authorization': `Bearer ${accessToken}`,
+    'User-Agent': getKiroUserAgent(machineId),
+    'x-amz-user-agent': getKiroAmzUserAgent(machineId)
+  }
+  const url = `${baseUrl}${path}`
+  if (agent) {
+    console.log('[Kiro REST API] Using K-Proxy agent')
+    return await undiciFetch(url, {
+      method: 'GET',
+      headers,
+      dispatcher: agent
+    } as UndiciRequestInit) as unknown as Response
+  }
+  return await fetch(url, { method: 'GET', headers })
+}
+
 async function getUsageLimitsRest(
   accessToken: string,
   profileArn?: string,
-  accountMachineId?: string  // 账户绑定的设备 ID
+  accountMachineId?: string,  // 账户绑定的设备 ID
+  ssoRegion?: string          // SSO 区域，用于选择正确的 REST API 端点
 ): Promise<UsageLimitsResponse> {
-  console.log(`[Kiro REST API] Calling GetUsageLimits`)
+  console.log(`[Kiro REST API] Calling GetUsageLimits (ssoRegion: ${ssoRegion || 'default'})`)
   
   // 优先使用账户绑定的设备 ID，其次使用 K-Proxy 全局设备 ID
   const machineId = accountMachineId || getCurrentMachineId()
   console.log(`[Kiro REST API] Machine ID: ${machineId || 'undefined'} (account: ${accountMachineId ? 'yes' : 'no'})`)
-  console.log(`[Kiro REST API] User-Agent: ${getKiroUserAgent(machineId)}`)
-  console.log(`[Kiro REST API] x-amz-user-agent: ${getKiroAmzUserAgent(machineId)}`)
+  
   const params = new URLSearchParams({
     origin: 'AI_EDITOR',
     resourceType: 'AGENTIC_REQUEST',
@@ -908,33 +982,23 @@ async function getUsageLimitsRest(
   if (profileArn) {
     params.set('profileArn', profileArn)
   }
+  const path = `/getUsageLimits?${params.toString()}`
   
-  const url = `${KIRO_REST_API_BASE}/getUsageLimits?${params.toString()}`
+  // 根据 SSO 区域选择主端点
+  const primaryBase = getRestApiBase(ssoRegion)
+  const fallbackBase = getFallbackRestApiBase(ssoRegion)
   
-  const agent = getKProxyAgent()
-  const headers: Record<string, string> = {
-    'Accept': 'application/json',
-    'Authorization': `Bearer ${accessToken}`,
-    'User-Agent': getKiroUserAgent(machineId),
-    'x-amz-user-agent': getKiroAmzUserAgent(machineId)
-  }
+  console.log(`[Kiro REST API] Primary endpoint: ${primaryBase}`)
   
-  let response: Response
-  if (agent) {
-    console.log('[Kiro REST API] Using K-Proxy agent')
-    response = await undiciFetch(url, {
-      method: 'GET',
-      headers,
-      dispatcher: agent
-    } as UndiciRequestInit) as unknown as Response
-  } else {
-    response = await fetch(url, {
-      method: 'GET',
-      headers
-    })
-  }
-  
+  let response = await fetchRestApi(primaryBase, path, accessToken, machineId)
   console.log(`[Kiro REST API] Response status: ${response.status}`)
+  
+  // 如果主端点返回 403，尝试备用端点
+  if (response.status === 403) {
+    console.log(`[Kiro REST API] Primary endpoint returned 403, trying fallback: ${fallbackBase}`)
+    response = await fetchRestApi(fallbackBase, path, accessToken, machineId)
+    console.log(`[Kiro REST API] Fallback response status: ${response.status}`)
+  }
   
   if (!response.ok) {
     const errorText = await response.text()
@@ -1005,11 +1069,12 @@ async function getUsageAndLimits(
   accessToken: string,
   idp: string = 'BuilderId',
   profileArn?: string,
-  accountMachineId?: string  // 账户绑定的设备 ID
+  accountMachineId?: string,  // 账户绑定的设备 ID
+  ssoRegion?: string          // SSO 区域，用于选择正确的 REST API 端点
 ): Promise<UnifiedUsageResponse> {
   if (currentUsageApiType === 'rest') {
     // 使用 REST API (GetUsageLimits)
-    const result = await getUsageLimitsRest(accessToken, profileArn, accountMachineId)
+    const result = await getUsageLimitsRest(accessToken, profileArn, accountMachineId, ssoRegion)
     console.log('[REST->Unified] Converting response:', JSON.stringify(result, null, 2))
     // REST API 返回的字段名和 CBOR API 相同，直接返回
     return {
@@ -1061,13 +1126,68 @@ async function getUsageAndLimits(
     }
   } else {
     // 使用 CBOR API (GetUserUsageAndLimits)
-    return kiroApiRequest<UnifiedUsageResponse>(
-      'GetUserUsageAndLimits',
-      { isEmailRequired: true, origin: 'KIRO_IDE' },
-      accessToken,
-      idp,
-      accountMachineId
-    )
+    // CBOR API (app.kiro.dev) 是网页端门户，仅支持 BuilderId 认证
+    // Enterprise/IdC 账号可能返回 401，需要 fallback 到 REST API
+    try {
+      return await kiroApiRequest<UnifiedUsageResponse>(
+        'GetUserUsageAndLimits',
+        { isEmailRequired: true, origin: 'KIRO_IDE' },
+        accessToken,
+        idp,
+        accountMachineId
+      )
+    } catch (cborError) {
+      const errorMsg = cborError instanceof Error ? cborError.message : ''
+      // CBOR 401/403 时自动 fallback 到 REST API
+      if (errorMsg.includes('401') || errorMsg.includes('403')) {
+        console.log(`[API] CBOR API failed (${errorMsg}), falling back to REST API...`)
+        const result = await getUsageLimitsRest(accessToken, profileArn, accountMachineId, ssoRegion)
+        return {
+          usageBreakdownList: result.usageBreakdownList?.map(b => ({
+            resourceType: b.resourceType || b.type,
+            displayName: b.displayName,
+            displayNamePlural: b.displayNamePlural,
+            currentUsage: b.currentUsage,
+            currentUsageWithPrecision: b.currentUsageWithPrecision,
+            usageLimit: b.usageLimit,
+            usageLimitWithPrecision: b.usageLimitWithPrecision,
+            currency: b.currency,
+            unit: b.unit,
+            overageRate: b.overageRate,
+            overageCap: b.overageCap,
+            type: b.type,
+            freeTrialInfo: b.freeTrialInfo ? {
+              freeTrialStatus: b.freeTrialInfo.freeTrialStatus,
+              usageLimit: b.freeTrialInfo.usageLimit,
+              usageLimitWithPrecision: b.freeTrialInfo.usageLimitWithPrecision,
+              currentUsage: b.freeTrialInfo.currentUsage,
+              currentUsageWithPrecision: b.freeTrialInfo.currentUsageWithPrecision,
+              freeTrialExpiry: typeof b.freeTrialInfo.freeTrialExpiry === 'number' 
+                ? new Date(b.freeTrialInfo.freeTrialExpiry * 1000).toISOString() 
+                : b.freeTrialInfo.freeTrialExpiry
+            } : (b.freeTrialUsage ? {
+              freeTrialStatus: b.freeTrialUsage.freeTrialStatus,
+              usageLimit: b.freeTrialUsage.usageLimit,
+              usageLimitWithPrecision: b.freeTrialUsage.usageLimitWithPrecision,
+              currentUsage: b.freeTrialUsage.currentUsage,
+              currentUsageWithPrecision: b.freeTrialUsage.currentUsageWithPrecision,
+              freeTrialExpiry: b.freeTrialUsage.freeTrialExpiry
+            } : undefined),
+            bonuses: b.bonuses?.map(bonus => ({
+              ...bonus,
+              expiresAt: typeof bonus.expiresAt === 'number' 
+                ? new Date(bonus.expiresAt * 1000).toISOString() 
+                : bonus.expiresAt
+            }))
+          })),
+          nextDateReset: normalizeResetDate(result.nextDateReset as unknown as number | string),
+          subscriptionInfo: result.subscriptionInfo,
+          overageConfiguration: result.overageConfiguration,
+          userInfo: result.userInfo
+        }
+      }
+      throw cborError
+    }
   }
 }
 
@@ -1261,6 +1381,10 @@ function registerShowWindowShortcut(): void {
   try {
     const success = globalShortcut.register(showWindowShortcut, () => {
       if (mainWindow) {
+        // macOS: 显示窗口时恢复 Dock 图标
+        if (process.platform === 'darwin' && app.dock) {
+          app.dock.show()
+        }
         if (mainWindow.isMinimized()) mainWindow.restore()
         mainWindow.show()
         mainWindow.focus()
@@ -1308,6 +1432,10 @@ function initTray(): void {
   createTray({
     onShowWindow: () => {
       if (mainWindow) {
+        // macOS: 显示窗口时恢复 Dock 图标
+        if (process.platform === 'darwin' && app.dock) {
+          app.dock.show()
+        }
         if (mainWindow.isMinimized()) {
           mainWindow.restore()
         }
@@ -1476,6 +1604,10 @@ function createWindow(): void {
         // 直接最小化到托盘
         event.preventDefault()
         mainWindow?.hide()
+        // macOS: 隐藏窗口时隐藏 Dock 图标
+        if (process.platform === 'darwin' && app.dock) {
+          app.dock.hide()
+        }
         return
       } else if (traySettings.closeAction === 'ask' && mainWindow) {
         // 询问用户 - 先阻止关闭，再异步处理
@@ -1727,6 +1859,10 @@ app.whenReady().then(async () => {
   ipcMain.on('close-confirm-response', (_event, action: 'minimize' | 'quit' | 'cancel', rememberChoice: boolean) => {
     if (action === 'minimize') {
       mainWindow?.hide()
+      // macOS: 隐藏窗口时隐藏 Dock 图标
+      if (process.platform === 'darwin' && app.dock) {
+        app.dock.hide()
+      }
     } else if (action === 'quit') {
       // 如果用户选择记住选择
       if (rememberChoice) {
@@ -2078,7 +2214,7 @@ app.whenReady().then(async () => {
         console.log('[SSO] Fetching user info and usage data...')
         const [userInfoResult, usageResult] = await Promise.all([
           getUserInfo(ssoResult.accessToken).catch(e => { console.error('[SSO] getUserInfo failed:', e); return undefined }),
-          getUsageAndLimits(ssoResult.accessToken).catch(e => { console.error('[SSO] getUsageAndLimits failed:', e); return undefined })
+          getUsageAndLimits(ssoResult.accessToken, 'BuilderId', undefined, undefined, region).catch(e => { console.error('[SSO] getUsageAndLimits failed:', e); return undefined })
         ])
         userInfo = userInfoResult
         usageData = usageResult
@@ -2336,7 +2472,7 @@ app.whenReady().then(async () => {
       return {
         success: true,
         data: {
-          status: userInfo?.status === 'Active' ? 'active' : (userInfo?.status ? 'error' : 'active'),
+          status: (!userInfo?.status || userInfo.status === 'Active' || userInfo.status === 'Stale') ? 'active' : 'error',
           email: result.userInfo?.email,
           userId: result.userInfo?.userId,
           idp: userInfo?.idp,
@@ -2406,7 +2542,7 @@ app.whenReady().then(async () => {
         // 并行调用 GetUserInfo 和 getUsageAndLimits
         const [userInfoResult, usageResult] = await Promise.all([
           getUserInfo(accessToken, idp, accountMachineId).catch(() => undefined), // GetUserInfo 失败不影响整体流程
-          getUsageAndLimits(accessToken, idp, undefined, accountMachineId)
+          getUsageAndLimits(accessToken, idp, undefined, accountMachineId, region)
         ])
         return parseUsageResponse(usageResult, undefined, userInfoResult)
       } catch (apiError) {
@@ -2464,7 +2600,7 @@ app.whenReady().then(async () => {
             try {
               const [userInfoResult, usageResult] = await Promise.all([
                 getUserInfo(refreshResult.accessToken, idp, accountMachineId).catch(() => undefined),
-                getUsageAndLimits(refreshResult.accessToken, idp, undefined, accountMachineId)
+                getUsageAndLimits(refreshResult.accessToken, idp, undefined, accountMachineId, region)
               ])
 
               // 返回结果并包含新凭证
@@ -2681,7 +2817,7 @@ app.whenReady().then(async () => {
                   }
                 }
                 console.log(`[BackgroundRefresh] Account ${account.id} machineId: ${account.machineId || 'undefined'}`)
-                const rawUsage = await getUsageAndLimits(newAccessToken, idp, undefined, account.machineId) as UsageResponse
+                const rawUsage = await getUsageAndLimits(newAccessToken, idp, undefined, account.machineId, region) as UsageResponse
                 
                 // 解析使用量数据
                 const creditUsage = rawUsage.usageBreakdownList?.find(b => b.resourceType === 'CREDIT')
@@ -2912,7 +3048,7 @@ app.whenReady().then(async () => {
 
             // 调用 API 获取用量和用户信息（根据配置选择 REST 或 CBOR 格式）
             const [usageRes, userInfoRes] = await Promise.allSettled([
-              getUsageAndLimits(accessToken, idp) as Promise<{
+              getUsageAndLimits(accessToken, idp, undefined, undefined, account.credentials?.region) as Promise<{
                 usageBreakdownList?: Array<{
                   resourceType?: string
                   displayName?: string
@@ -3082,8 +3218,8 @@ app.whenReady().then(async () => {
                 userId: rawUserInfo.userId,
                 status: rawUserInfo.status
               }
-              // 检查用户状态（非 Active 表示异常）
-              if (rawUserInfo.status && rawUserInfo.status !== 'Active' && status !== 'error') {
+              // 检查用户状态（Stale 视为正常，仅 Suspended/Disabled 等视为异常）
+              if (rawUserInfo.status && rawUserInfo.status !== 'Active' && rawUserInfo.status !== 'Stale' && status !== 'error') {
                 status = 'error'
                 errorMessage = `用户状态异常: ${rawUserInfo.status}`
               }
@@ -3273,7 +3409,7 @@ app.whenReady().then(async () => {
       let usageUnknown = false
 
       try {
-        usageResult = await getUsageAndLimits(refreshResult.accessToken, idp) as UsageResponse
+        usageResult = await getUsageAndLimits(refreshResult.accessToken, idp, undefined, undefined, region) as UsageResponse
       } catch (usageError) {
         const errMsg = usageError instanceof Error ? usageError.message : String(usageError)
         console.warn('[Verify] GetUserUsageAndLimits failed:', errMsg)
@@ -3304,6 +3440,7 @@ app.whenReady().then(async () => {
           usageUnknown = true
         }
       }
+
 
       // 解析用户信息
       const email = usageResult.userInfo?.email || ''
@@ -4295,6 +4432,7 @@ app.whenReady().then(async () => {
           codeReferences: parsed['kiroAgent.codeReferences.referenceTracker'],
           configureMCP: parsed['kiroAgent.configureMCP'],
           trustedCommands: parsed['kiroAgent.trustedCommands'] || [],
+          trustedTools: parsed['kiroAgent.trustedTools'] || {},
           commandDenylist: parsed['kiroAgent.commandDenylist'] || [],
           ignoreFiles: parsed['kiroAgent.ignoreFiles'] || [],
           mcpApprovedEnvVars: parsed['kiroAgent.mcpApprovedEnvVars'] || [],
@@ -4325,6 +4463,46 @@ app.whenReady().then(async () => {
     } catch (error) {
       console.error('[KiroSettings] Failed to get settings:', error)
       return { error: error instanceof Error ? error.message : 'Failed to get settings' }
+    }
+  })
+
+  // IPC: 获取 Kiro 可用模型列表（使用当前账号调用官方 API）
+  ipcMain.handle('get-kiro-available-models', async () => {
+    try {
+      if (!store) return { models: [] }
+      const accountData = store.get('accountData') as { accounts?: Record<string, any> } | undefined
+      if (!accountData?.accounts) return { models: [] }
+
+      // 优先使用当前激活账号（isActive），其次使用第一个 active 且有 accessToken 的账号
+      const allAccounts = Object.values(accountData.accounts) as any[]
+      const account = allAccounts.find((acc: any) => acc.isActive && acc.credentials?.accessToken)
+        || allAccounts.find((acc: any) => acc.status === 'active' && acc.credentials?.accessToken)
+      if (!account) return { models: [] }
+
+      const proxyAccount = {
+        id: account.id,
+        email: account.email,
+        accessToken: account.credentials.accessToken,
+        refreshToken: account.credentials?.refreshToken,
+        profileArn: account.profileArn,
+        expiresAt: account.credentials?.expiresAt,
+        clientId: account.credentials?.clientId,
+        clientSecret: account.credentials?.clientSecret,
+        region: account.credentials?.region || 'us-east-1',
+        authMethod: account.credentials?.authMethod
+      }
+
+      const models = await fetchKiroModels(proxyAccount)
+      return {
+        models: models.map(m => ({
+          id: m.modelId,
+          name: m.modelName,
+          description: m.description
+        }))
+      }
+    } catch (error) {
+      console.error('[KiroSettings] Failed to fetch models:', error)
+      return { models: [], error: error instanceof Error ? error.message : 'Failed to fetch models' }
     }
   })
 
@@ -4361,6 +4539,7 @@ app.whenReady().then(async () => {
         'kiroAgent.codeReferences.referenceTracker': settings.codeReferences,
         'kiroAgent.configureMCP': settings.configureMCP,
         'kiroAgent.trustedCommands': settings.trustedCommands,
+        'kiroAgent.trustedTools': settings.trustedTools,
         'kiroAgent.commandDenylist': settings.commandDenylist,
         'kiroAgent.ignoreFiles': settings.ignoreFiles,
         'kiroAgent.mcpApprovedEnvVars': settings.mcpApprovedEnvVars,
@@ -5074,9 +5253,9 @@ app.whenReady().then(async () => {
   })
 
   // IPC: 获取账户可用模型列表
-  ipcMain.handle('account-get-models', async (_event, accessToken: string) => {
+  ipcMain.handle('account-get-models', async (_event, accessToken: string, region?: string, profileArn?: string) => {
     try {
-      const models = await fetchKiroModels({ accessToken } as ProxyAccount)
+      const models = await fetchKiroModels({ accessToken, region: region || 'us-east-1', profileArn } as ProxyAccount)
       return {
         success: true,
         models: models.map(m => ({
@@ -5096,9 +5275,9 @@ app.whenReady().then(async () => {
   })
 
   // IPC: 获取可用订阅列表
-  ipcMain.handle('account-get-subscriptions', async (_event, accessToken: string) => {
+  ipcMain.handle('account-get-subscriptions', async (_event, accessToken: string, region?: string) => {
     try {
-      const result = await fetchAvailableSubscriptions({ accessToken } as ProxyAccount)
+      const result = await fetchAvailableSubscriptions({ accessToken, region: region || 'us-east-1' } as ProxyAccount)
       if (result.subscriptionPlans) {
         return { 
           success: true, 
@@ -5113,9 +5292,9 @@ app.whenReady().then(async () => {
   })
 
   // IPC: 获取订阅管理/支付链接
-  ipcMain.handle('account-get-subscription-url', async (_event, accessToken: string, subscriptionType?: string) => {
+  ipcMain.handle('account-get-subscription-url', async (_event, accessToken: string, subscriptionType?: string, region?: string) => {
     try {
-      const result = await fetchSubscriptionToken({ accessToken } as ProxyAccount, subscriptionType)
+      const result = await fetchSubscriptionToken({ accessToken, region: region || 'us-east-1' } as ProxyAccount, subscriptionType)
       if (result.encodedVerificationUrl) {
         return { success: true, url: result.encodedVerificationUrl, status: result.status }
       }
@@ -5813,7 +5992,10 @@ app.whenReady().then(async () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow()
     } else if (mainWindow) {
-      // macOS: 点击 Dock 图标时显示主窗口（像微信一样）
+      // macOS: 点击 Dock 图标时显示主窗口
+      if (process.platform === 'darwin' && app.dock) {
+        app.dock.show()
+      }
       if (mainWindow.isMinimized()) mainWindow.restore()
       mainWindow.show()
       mainWindow.focus()
@@ -5879,6 +6061,8 @@ app.on('will-quit', async (event) => {
     
     try {
       console.log('[Exit] Saving data before quit...')
+      // 刷新待写入的防抖数据
+      flushStoreWrites()
       store.set('accountData', lastSavedData)
       await createBackup(lastSavedData)
       console.log('[Exit] Data saved successfully')

@@ -525,6 +525,14 @@ const api = {
     return ipcRenderer.invoke('get-kiro-settings')
   },
 
+  // 获取 Kiro 可用模型列表
+  getKiroAvailableModels: (): Promise<{
+    models: Array<{ id: string; name: string; description: string }>
+    error?: string
+  }> => {
+    return ipcRenderer.invoke('get-kiro-available-models')
+  },
+
   // 保存 Kiro 设置
   saveKiroSettings: (settings: Record<string, unknown>): Promise<{ success: boolean; error?: string }> => {
     return ipcRenderer.invoke('save-kiro-settings', settings)
@@ -695,18 +703,18 @@ const api = {
   },
 
   // 获取账户可用模型列表
-  accountGetModels: (accessToken: string): Promise<{ success: boolean; error?: string; models: Array<{ id: string; name: string; description: string; inputTypes?: string[]; maxInputTokens?: number | null; maxOutputTokens?: number | null; rateMultiplier?: number; rateUnit?: string }> }> => {
-    return ipcRenderer.invoke('account-get-models', accessToken)
+  accountGetModels: (accessToken: string, region?: string, profileArn?: string): Promise<{ success: boolean; error?: string; models: Array<{ id: string; name: string; description: string; inputTypes?: string[]; maxInputTokens?: number | null; maxOutputTokens?: number | null; rateMultiplier?: number; rateUnit?: string }> }> => {
+    return ipcRenderer.invoke('account-get-models', accessToken, region, profileArn)
   },
 
   // 获取可用订阅列表
-  accountGetSubscriptions: (accessToken: string): Promise<{ success: boolean; error?: string; plans: Array<{ name: string; qSubscriptionType: string; description: { title: string; billingInterval: string; featureHeader: string; features: string[] }; pricing: { amount: number; currency: string } }>; disclaimer?: string[] }> => {
-    return ipcRenderer.invoke('account-get-subscriptions', accessToken)
+  accountGetSubscriptions: (accessToken: string, region?: string): Promise<{ success: boolean; error?: string; plans: Array<{ name: string; qSubscriptionType: string; description: { title: string; billingInterval: string; featureHeader: string; features: string[] }; pricing: { amount: number; currency: string } }>; disclaimer?: string[] }> => {
+    return ipcRenderer.invoke('account-get-subscriptions', accessToken, region)
   },
 
   // 获取订阅管理/支付链接
-  accountGetSubscriptionUrl: (accessToken: string, subscriptionType?: string): Promise<{ success: boolean; error?: string; url?: string; status?: string }> => {
-    return ipcRenderer.invoke('account-get-subscription-url', accessToken, subscriptionType)
+  accountGetSubscriptionUrl: (accessToken: string, subscriptionType?: string, region?: string): Promise<{ success: boolean; error?: string; url?: string; status?: string }> => {
+    return ipcRenderer.invoke('account-get-subscription-url', accessToken, subscriptionType, region)
   },
 
   // 在新窗口打开订阅链接

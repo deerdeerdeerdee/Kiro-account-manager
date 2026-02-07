@@ -334,8 +334,8 @@ export class ProxyServer {
       }
     }
 
-    // 获取一个可用账号来请求模型列表
-    const account = this.accountPool.getNextAccount()
+    // 使用与请求处理相同的账号选择逻辑
+    const account = await this.getAvailableAccount()
     if (!account) {
       return { models: [], fromCache: false }
     }

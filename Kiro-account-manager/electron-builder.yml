@@ -52,6 +52,9 @@ linux:
   executableName: kiro-account-manager
   maintainer: electronjs.org
   category: Utility
+deb:
+  afterInstall: build/linux/after-install.sh
+  afterRemove: build/linux/after-remove.sh
 appImage:
   artifactName: ${name}-${version}-${arch}.${ext}
 snap:

@@ -1113,9 +1113,15 @@ export interface KiroModel {
   }
 }
 
-// 获取 Kiro 官方模型列表
+// 根据账号区域获取 Q Service 端点（官方插件使用 q.{region}.amazonaws.com）
+function getQServiceEndpoint(region?: string): string {
+  if (region?.startsWith('eu-')) return 'https://q.eu-central-1.amazonaws.com'
+  return 'https://q.us-east-1.amazonaws.com'
+}
+
+// 获取 Kiro 官方模型列表（支持分页，与官方插件一致传递 profileArn）
 export async function fetchKiroModels(account: ProxyAccount): Promise<KiroModel[]> {
-  const url = 'https://codewhisperer.us-east-1.amazonaws.com/ListAvailableModels?origin=AI_EDITOR&maxResults=50'
+  const baseUrl = getQServiceEndpoint(account.region)
   const machineId = getAccountMachineId(account.id, account.machineId)
   
   const headers: Record<string, string> = {
@@ -1127,19 +1133,32 @@ export async function fetchKiroModels(account: ProxyAccount): Promise<KiroModel[
     'x-amzn-codewhisperer-optout': 'true'
   }
 
-  try {
-    const response = await fetchWithProxy(url, { method: 'GET', headers })
-    
-    if (!response.ok) {
-      console.error('[KiroAPI] ListAvailableModels failed:', response.status)
-      return []
-    }
+  const allModels: KiroModel[] = []
+  let nextToken: string | undefined
 
-    const data = await response.json()
-    return data.models || []
+  try {
+    do {
+      const params = new URLSearchParams({ origin: 'AI_EDITOR', maxResults: '50' })
+      if (account.profileArn) params.set('profileArn', account.profileArn)
+      if (nextToken) params.set('nextToken', nextToken)
+
+      const url = `${baseUrl}/ListAvailableModels?${params.toString()}`
+      const response = await fetchWithProxy(url, { method: 'GET', headers })
+      
+      if (!response.ok) {
+        console.error('[KiroAPI] ListAvailableModels failed:', response.status)
+        break
+      }
+
+      const data = await response.json()
+      allModels.push(...(data.models || []))
+      nextToken = data.nextToken
+    } while (nextToken)
+
+    return allModels
   } catch (error) {
     console.error('[KiroAPI] ListAvailableModels error:', error)
-    return []
+    return allModels.length > 0 ? allModels : []
   }
 }
 
@@ -1167,7 +1186,8 @@ export interface SubscriptionListResponse {
 
 // 获取可用订阅列表
 export async function fetchAvailableSubscriptions(account: ProxyAccount): Promise<SubscriptionListResponse> {
-  const url = 'https://codewhisperer.us-east-1.amazonaws.com/listAvailableSubscriptions'
+  const baseUrl = getQServiceEndpoint(account.region)
+  const url = `${baseUrl}/listAvailableSubscriptions`
   const machineId = getAccountMachineId(account.id, account.machineId)
   
   const headers: Record<string, string> = {
@@ -1208,7 +1228,8 @@ export async function fetchSubscriptionToken(
   account: ProxyAccount,
   subscriptionType?: string
 ): Promise<SubscriptionTokenResponse> {
-  const url = 'https://codewhisperer.us-east-1.amazonaws.com/CreateSubscriptionToken'
+  const baseUrl = getQServiceEndpoint(account.region)
+  const url = `${baseUrl}/CreateSubscriptionToken`
   const machineId = getAccountMachineId(account.id, account.machineId)
   
   const headers: Record<string, string> = {
